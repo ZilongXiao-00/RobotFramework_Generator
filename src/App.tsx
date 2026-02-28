@@ -1,0 +1,412 @@
+import React, { useState } from 'react';
+import { 
+  Play, Code, Search, Settings, FileText, 
+  Terminal, ChevronRight, ChevronDown, Trash2, GripVertical,
+  Plus, X, CornerDownRight, Download
+} from 'lucide-react';
+
+// --- Mock Data ---
+const KEYWORD_LIBRARY = [
+  { category: 'Control Flow', name: 'IF', args: ['condition'], desc: 'IF statement', isContainer: true },
+  { category: 'Control Flow', name: 'ELSE IF', args: ['condition'], desc: 'ELSE IF statement', isContainer: true },
+  { category: 'Control Flow', name: 'ELSE', args: [], desc: 'ELSE statement', isContainer: true },
+  { category: 'Control Flow', name: 'FOR', args: ['variable', 'IN', 'values'], desc: 'FOR loop', isContainer: true },
+  { category: 'Control Flow', name: 'WHILE', args: ['condition'], desc: 'WHILE loop', isContainer: true },
+  { category: 'Variables', name: 'Set Variable', args: ['value'], desc: 'Returns the given value (used for local assignment).' },
+  { category: 'Variables', name: 'Set Suite Variable', args: ['name', 'value'], desc: 'Makes a variable available everywhere within the scope of the current suite.' },
+  { category: 'Variables', name: 'Set Global Variable', args: ['name', 'value'], desc: 'Makes a variable available globally in all tests and suites.' },
+  { category: 'BuiltIn', name: 'Log', args: ['message', 'level'], desc: 'Logs the given message.' },
+  { category: 'BuiltIn', name: 'Sleep', args: ['time'], desc: 'Pauses the test.' },
+  { category: 'SeleniumLibrary', name: 'Open Browser', args: ['url', 'browser'], desc: 'Opens a new browser.' },
+  { category: 'SeleniumLibrary', name: 'Input Text', args: ['locator', 'text'], desc: 'Types text.' },
+  { category: 'Custom', name: '空白模板 (Custom Code)', args: [], isCustomCode: true, desc: '手写代码' },
+];
+
+export default function App() {
+  const [steps, setSteps] = useState([]);
+  const [selectedStepId, setSelectedStepId] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showCode, setShowCode] = useState(false);
+  const [logs, setLogs] = useState([]);
+  const [isRunning, setIsRunning] = useState(false);
+  const [globalVars, setGlobalVars] = useState([{ name: '${BASE_URL}', value: 'https://example.com' }]);
+  const [showGlobalVars, setShowGlobalVars] = useState(false);
+
+  // --- Tree Operations ---
+  const findStep = (nodes, id) => {
+    for (let node of nodes) {
+      if (node.id === id) return node;
+      if (node.children) {
+        const found = findStep(node.children, id);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+
+  const updateNode = (nodes, id, updates) => {
+    return nodes.map(node => {
+      if (node.id === id) return { ...node, ...updates };
+      if (node.children) return { ...node, children: updateNode(node.children, id, updates) };
+      return node;
+    });
+  };
+
+  const deleteNode = (nodes, id) => {
+    return nodes.filter(node => {
+      if (node.id === id) return false;
+      if (node.children) node.children = deleteNode(node.children, id);
+      return true;
+    });
+  };
+
+  const addNode = (nodes, parentId, newNode) => {
+    if (!parentId) return [...nodes, newNode];
+    return nodes.map(node => {
+      if (node.id === parentId) return { ...node, children: [...(node.children || []), newNode] };
+      if (node.children) return { ...node, children: addNode(node.children, parentId, newNode) };
+      return node;
+    });
+  };
+
+  // --- Drag and Drop ---
+  const handleDragStart = (e, keyword) => {
+    e.dataTransfer.setData('application/json', JSON.stringify(keyword));
+    e.stopPropagation();
+  };
+
+  const handleDrop = (e, parentId = null) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const data = e.dataTransfer.getData('application/json');
+    if (data) {
+      const keyword = JSON.parse(data);
+      const newStep = {
+        id: `step_${Date.now()}`,
+        keyword: keyword.name,
+        isCustomCode: keyword.isCustomCode || false,
+        isContainer: keyword.isContainer || false,
+        args: keyword.args ? keyword.args.reduce((acc, arg) => ({ ...acc, [arg]: '' }), {}) : {},
+        customCode: '',
+        outputVar: '',
+        children: keyword.isContainer ? [] : undefined
+      };
+      setSteps(prev => addNode(prev, parentId, newStep));
+      setSelectedStepId(newStep.id);
+    }
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  // --- Handlers ---
+  const updateStep = (id, updates) => setSteps(prev => updateNode(prev, id, updates));
+  
+  const handleDelete = (e, id) => {
+    e.stopPropagation();
+    setSteps(prev => deleteNode(prev, id));
+    if (selectedStepId === id) setSelectedStepId(null);
+  };
+
+  const selectedStep = findStep(steps, selectedStepId);
+
+  // --- Code Generation ---
+  const generateStepCode = (nodes, indentLevel = 1) => {
+    let code = '';
+    const indent = '    '.repeat(indentLevel);
+    
+    nodes.forEach(step => {
+      if (step.isCustomCode) {
+        step.customCode.split('\n').forEach(line => { code += `${indent}${line}\n`; });
+      } else if (step.isContainer) {
+        let line = `${indent}${step.keyword}`;
+        Object.values(step.args).forEach(val => { if (val) line += `    ${val}`; });
+        code += line + '\n';
+        
+        if (step.children && step.children.length > 0) {
+          code += generateStepCode(step.children, indentLevel + 1);
+        } else {
+          code += `${indent}    # TODO: Add steps here\n`;
+        }
+        
+        // RF requires END for IF/FOR/WHILE
+        if (!['ELSE IF', 'ELSE'].includes(step.keyword)) {
+          code += `${indent}END\n`;
+        }
+      } else {
+        let line = indent;
+        if (step.outputVar) line += `${step.outputVar} =    `;
+        line += step.keyword;
+        Object.values(step.args).forEach(val => { if (val) line += `    ${val}`; });
+        code += line + '\n';
+      }
+    });
+    return code;
+  };
+
+  const generateCode = () => {
+    let code = '*** Settings ***\nLibrary    SeleniumLibrary\n\n*** Variables ***\n';
+    globalVars.forEach(v => { if (v.name && v.value) code += `${v.name.padEnd(20)} ${v.value}\n`; });
+    code += '\n*** Test Cases ***\nDemo Visual Test Case\n    [Documentation]    Generated by Visual Editor\n';
+    code += generateStepCode(steps, 1);
+    return code;
+  };
+
+  // --- Download Code ---
+  const handleDownload = () => {
+    const code = generateCode();
+    const blob = new Blob([code], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'demo_test.robot';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  // --- Simulation ---
+  const runSimulation = () => {
+    setIsRunning(true);
+    setShowCode(false);
+    setLogs(['[INFO] Starting test execution...', '[INFO] Parsing visual blocks...']);
+    setTimeout(() => {
+      setLogs(prev => [...prev, '[PASS] Test execution completed successfully.']);
+      setIsRunning(false);
+    }, 1500);
+  };
+
+  // --- Renderers ---
+  const renderSteps = (nodes, parentId = null) => {
+    if (!nodes || nodes.length === 0) {
+      if (parentId) {
+        return (
+          <div className="py-4 text-center border-2 border-dashed border-gray-200 rounded bg-gray-50/50 text-gray-400 text-xs font-medium">
+            拖拽模块到此内部
+          </div>
+        );
+      }
+      return null;
+    }
+
+    return nodes.map((step, index) => (
+      <div 
+        key={step.id}
+        onClick={(e) => { e.stopPropagation(); setSelectedStepId(step.id); }}
+        className={`group relative flex flex-col bg-white border rounded-lg shadow-sm cursor-pointer transition-all mb-2 ${selectedStepId === step.id ? 'border-[#F27D26] ring-1 ring-[#F27D26]' : 'border-gray-300 hover:border-gray-400'}`}
+      >
+        {/* Step Header */}
+        <div className="flex items-stretch">
+          <div className={`w-8 flex items-center justify-center border-r border-gray-100 text-gray-400 group-hover:text-gray-600 rounded-tl-lg ${step.isContainer ? 'bg-blue-50' : 'bg-gray-50'}`}>
+            <GripVertical size={16} />
+          </div>
+          <div className="flex-1 p-3 flex flex-col justify-center">
+            <div className="flex items-center gap-2">
+              {step.isContainer && <CornerDownRight size={14} className="text-blue-500" />}
+              {step.outputVar && (
+                <span className="text-xs font-mono text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-100">
+                  {step.outputVar} =
+                </span>
+              )}
+              <span className={`text-sm font-bold ${step.isCustomCode ? 'text-blue-600' : step.isContainer ? 'text-blue-700' : 'text-gray-800'}`}>
+                {step.keyword}
+              </span>
+              {/* Inline Args */}
+              <div className="flex gap-2 ml-2">
+                {Object.entries(step.args).map(([key, val]) => val && (
+                  <span key={key} className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200">
+                    {key}: <span className="font-mono text-gray-800">{val}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+          <button 
+            onClick={(e) => handleDelete(e, step.id)}
+            className="w-10 flex items-center justify-center text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-tr-lg transition-colors opacity-0 group-hover:opacity-100"
+          >
+            <Trash2 size={16} />
+          </button>
+        </div>
+
+        {/* Container Body (Nested Dropzone) */}
+        {step.isContainer && (
+          <div 
+            className="ml-8 mr-2 mb-2 p-2 border-l-2 border-blue-300 bg-blue-50/30 rounded-r min-h-[40px]"
+            onDrop={(e) => handleDrop(e, step.id)}
+            onDragOver={handleDragOver}
+          >
+            {renderSteps(step.children, step.id)}
+          </div>
+        )}
+      </div>
+    ));
+  };
+
+  const filteredLibrary = KEYWORD_LIBRARY.filter(kw => kw.name.toLowerCase().includes(searchQuery.toLowerCase()));
+  const categories = [...new Set(filteredLibrary.map(kw => kw.category))];
+
+  return (
+    <div className="flex flex-col h-screen bg-[#E4E3E0] text-[#141414] font-sans overflow-hidden">
+      {/* Header */}
+      <header className="flex items-center justify-between px-4 py-3 bg-[#141414] text-[#E4E3E0] shadow-md z-10">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 bg-[#F27D26] rounded flex items-center justify-center font-bold text-white">RF</div>
+          <div>
+            <h1 className="font-bold text-sm tracking-wide">Robot Framework Visual Editor</h1>
+            <p className="text-[10px] text-gray-400 font-mono">MVP Prototype</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <button onClick={() => setShowCode(!showCode)} className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium border border-gray-600 rounded hover:bg-gray-800 transition-colors">
+            <Code size={14} /> {showCode ? '隐藏代码' : '查看生成的代码'}
+          </button>
+          <button onClick={handleDownload} className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium border border-gray-600 rounded hover:bg-gray-800 transition-colors">
+            <Download size={14} /> 保存 .robot 文件
+          </button>
+          <button onClick={runSimulation} disabled={isRunning || steps.length === 0} className="flex items-center gap-2 px-4 py-1.5 text-xs font-bold bg-[#F27D26] text-white rounded hover:bg-[#d96b1f] disabled:opacity-50 transition-colors">
+            <Play size={14} fill="currentColor" /> 运行测试
+          </button>
+        </div>
+      </header>
+
+      <div className="flex flex-1 overflow-hidden">
+        {/* Left: Library */}
+        <div className="w-64 bg-white border-r border-gray-300 flex flex-col shadow-sm z-10">
+          <div className="p-3 border-b border-gray-200">
+            <div className="relative">
+              <Search size={14} className="absolute left-2.5 top-2 text-gray-400" />
+              <input type="text" placeholder="搜索关键字..." className="w-full pl-8 pr-3 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto p-2 space-y-4">
+            {categories.map(cat => (
+              <div key={cat}>
+                <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2 px-1">{cat}</div>
+                <div className="space-y-1">
+                  {filteredLibrary.filter(kw => kw.category === cat).map(kw => (
+                    <div key={kw.name} draggable onDragStart={(e) => handleDragStart(e, kw)} className={`px-3 py-2 text-xs border rounded cursor-grab active:cursor-grabbing hover:shadow-sm transition-all ${kw.isContainer ? 'bg-blue-50 border-blue-200 text-blue-800 border-l-4 border-l-blue-500' : kw.isCustomCode ? 'bg-purple-50 border-purple-200 text-purple-800' : 'bg-gray-50 border-gray-200 hover:border-gray-300'}`} title={kw.desc}>
+                      <div className="font-medium flex items-center gap-1">
+                        {kw.isContainer && <CornerDownRight size={12} />}
+                        {kw.name}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Middle: Canvas */}
+        <div className="flex-1 flex flex-col relative bg-[#f5f5f5]">
+          {showCode ? (
+            <div className="flex-1 p-4 overflow-auto">
+              <div className="bg-[#1e1e1e] text-[#d4d4d4] p-4 rounded-lg shadow-inner font-mono text-sm whitespace-pre h-full overflow-auto">
+                {generateCode()}
+              </div>
+            </div>
+          ) : (
+            <div className="flex-1 p-6 overflow-y-auto" onDrop={(e) => handleDrop(e, null)} onDragOver={handleDragOver}>
+              <div className="max-w-3xl mx-auto min-h-full pb-32">
+                {/* Global Vars */}
+                <div className="mb-6 bg-white border border-gray-300 rounded-lg shadow-sm overflow-hidden">
+                  <div className="px-4 py-2 bg-gray-100 border-b border-gray-200 flex items-center justify-between cursor-pointer hover:bg-gray-200 transition-colors" onClick={() => setShowGlobalVars(!showGlobalVars)}>
+                    <div className="flex items-center gap-2 text-sm font-bold text-gray-700"><Settings size={16} /> 全局变量配置 (Suite Variables)</div>
+                    {showGlobalVars ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                  </div>
+                  {showGlobalVars && (
+                    <div className="p-4 space-y-2">
+                      {globalVars.map((v, i) => (
+                        <div key={i} className="flex items-center gap-2">
+                          <input type="text" value={v.name} onChange={(e) => { const newVars = [...globalVars]; newVars[i].name = e.target.value; setGlobalVars(newVars); }} placeholder="${VAR_NAME}" className="w-1/3 px-2 py-1 text-xs font-mono border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" />
+                          <span className="text-gray-400">=</span>
+                          <input type="text" value={v.value} onChange={(e) => { const newVars = [...globalVars]; newVars[i].value = e.target.value; setGlobalVars(newVars); }} placeholder="Value" className="flex-1 px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" />
+                          <button onClick={() => setGlobalVars(globalVars.filter((_, idx) => idx !== i))} className="p-1 text-gray-400 hover:text-red-500"><X size={14} /></button>
+                        </div>
+                      ))}
+                      <button onClick={() => setGlobalVars([...globalVars, { name: '', value: '' }])} className="flex items-center gap-1 text-xs text-[#F27D26] font-medium hover:underline mt-2"><Plus size={12} /> 添加变量</button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Steps Area */}
+                {steps.length === 0 ? (
+                  <div className="h-64 border-2 border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center text-gray-400">
+                    <FileText size={48} className="mb-4 opacity-50" />
+                    <p className="font-medium">从左侧拖拽关键字到此处</p>
+                    <p className="text-xs mt-1">支持 IF/FOR 嵌套结构</p>
+                  </div>
+                ) : (
+                  renderSteps(steps, null)
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Console */}
+          <div className="h-48 bg-[#1e1e1e] border-t border-gray-700 flex flex-col z-10">
+            <div className="px-4 py-1.5 bg-[#2d2d2d] border-b border-gray-700 flex items-center gap-2 text-xs font-medium text-gray-300"><Terminal size={14} /> 执行控制台</div>
+            <div className="flex-1 p-3 overflow-y-auto font-mono text-[11px] text-gray-300 space-y-1">
+              {logs.length === 0 ? <div className="text-gray-600 italic">等待执行...</div> : logs.map((log, i) => <div key={i} className={`${log.includes('[PASS]') ? 'text-green-400' : ''}`}>{log}</div>)}
+            </div>
+          </div>
+        </div>
+
+        {/* Right: Properties */}
+        <div className="w-72 bg-white border-l border-gray-300 flex flex-col shadow-sm z-10">
+          <div className="px-4 py-3 border-b border-gray-200 bg-gray-50"><h2 className="text-sm font-bold text-gray-800">属性配置 (Properties)</h2></div>
+          <div className="flex-1 overflow-y-auto p-4">
+            {!selectedStep ? (
+              <div className="text-center text-gray-400 text-xs mt-10">请在画布中选中一个模块</div>
+            ) : (
+              <div className="space-y-5">
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">当前关键字</label>
+                  <div className="text-sm font-bold text-gray-800 flex items-center gap-1">
+                    {selectedStep.isContainer && <CornerDownRight size={14} className="text-blue-500" />}
+                    {selectedStep.keyword}
+                  </div>
+                </div>
+
+                {selectedStep.isCustomCode ? (
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">原生代码</label>
+                    <textarea value={selectedStep.customCode} onChange={(e) => updateStep(selectedStep.id, { customCode: e.target.value })} className="w-full h-48 p-2 text-xs font-mono border border-gray-300 rounded focus:outline-none focus:border-[#F27D26] bg-gray-50" />
+                  </div>
+                ) : (
+                  <>
+                    <div className="pt-2 border-t border-gray-100">
+                      <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-3">输入参数 (Arguments)</label>
+                      {Object.keys(selectedStep.args).length === 0 ? (
+                        <div className="text-xs text-gray-400 italic">此关键字无参数</div>
+                      ) : (
+                        <div className="space-y-3">
+                          {Object.keys(selectedStep.args).map(argName => (
+                            <div key={argName}>
+                              <label className="block text-xs text-gray-700 mb-1">{argName}</label>
+                              <input type="text" value={selectedStep.args[argName]} onChange={(e) => updateStep(selectedStep.id, { args: { ...selectedStep.args, [argName]: e.target.value } })} className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" placeholder={`输入 ${argName}`} />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    {!selectedStep.isContainer && (
+                      <div className="pt-4 border-t border-gray-100">
+                        <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">输出变量 (Return Value)</label>
+                        <input type="text" value={selectedStep.outputVar} onChange={(e) => updateStep(selectedStep.id, { outputVar: e.target.value })} className="w-full px-2 py-1.5 text-xs font-mono border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" placeholder="例如: ${result}" />
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
