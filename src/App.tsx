@@ -17,7 +17,8 @@ const KEYWORD_LIBRARY = [
   { category: 'Variables', name: 'Set Global Variable', args: ['name', 'value'], desc: 'Makes a variable available globally in all tests and suites.' },
   { category: 'BuiltIn', name: 'Log', args: ['message', 'level'], desc: 'Logs the given message.' },
   { category: 'BuiltIn', name: 'Sleep', args: ['time'], desc: 'Pauses the test.' },
-  { category: 'SeleniumLibrary', name: 'Open Browser', args: ['url', 'browser'], desc: 'Opens a new browser.' },
+  { category: 'SeleniumLibrary', name: 'SERControl_DriverOccpuant', args: ['url', 'browser'], desc: 'Driver Occpuant' },
+  { category: 'SeleniumLibrary', name: '初始化连接', args: ['车内车外机械臂'], desc: '机械臂初始化' },
   { category: 'SeleniumLibrary', name: 'Input Text', args: ['locator', 'text'], desc: 'Types text.' },
   { category: 'Custom', name: '空白模板 (Custom Code)', args: [], isCustomCode: true, desc: '手写代码' },
 ];
