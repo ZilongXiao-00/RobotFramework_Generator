@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { 
   Play, Code, Search, Settings, FileText, 
   Terminal, ChevronRight, ChevronDown, Trash2, GripVertical,
-  Plus, X, CornerDownRight, Download
+  Plus, X, CornerDownRight, Download, Hash
 } from 'lucide-react';
 
 // --- Mock Data ---
@@ -12,14 +12,27 @@ const KEYWORD_LIBRARY = [
   { category: 'Control Flow', name: 'ELSE', args: [], desc: 'ELSE statement', isContainer: true },
   { category: 'Control Flow', name: 'FOR', args: ['variable', 'IN', 'values'], desc: 'FOR loop', isContainer: true },
   { category: 'Control Flow', name: 'WHILE', args: ['condition'], desc: 'WHILE loop', isContainer: true },
+  { category: 'Control Flow', name: 'Exit For Loop', args: [], desc: 'Stops executing the enclosing FOR loop.' },
+  { category: 'Control Flow', name: 'Run Keyword If', args: ['condition', 'keyword'], desc: 'Runs the given keyword with the given arguments, if condition is true.' },
   { category: 'Variables', name: 'Set Variable', args: ['value'], desc: 'Returns the given value (used for local assignment).' },
   { category: 'Variables', name: 'Set Suite Variable', args: ['name', 'value'], desc: 'Makes a variable available everywhere within the scope of the current suite.' },
   { category: 'Variables', name: 'Set Global Variable', args: ['name', 'value'], desc: 'Makes a variable available globally in all tests and suites.' },
   { category: 'BuiltIn', name: 'Log', args: ['message', 'level'], desc: 'Logs the given message.' },
   { category: 'BuiltIn', name: 'Sleep', args: ['time'], desc: 'Pauses the test.' },
-  { category: 'SeleniumLibrary', name: 'SERControl_DriverOccpuant', args: ['url', 'browser'], desc: 'Driver Occpuant' },
-  { category: 'SeleniumLibrary', name: '初始化连接', args: ['车内车外机械臂'], desc: '机械臂初始化' },
-  { category: 'SeleniumLibrary', name: 'Input Text', args: ['locator', 'text'], desc: 'Types text.' },
+  { category: 'BuiltIn', name: 'Should Be Equal As Strings', args: ['first', 'second'], desc: 'Fails if objects are unequal after converting them to strings.' },
+  { category: 'BuiltIn', name: 'Evaluate', args: ['expression'], desc: 'Evaluates the given expression in Python and returns the result.' },
+  { category: 'BuiltIn', name: 'Comment', args: ['text'], desc: 'Adds a comment.', isComment: true },
+  { category: 'Custom Library', name: 'SERControl_DriverNoOccpuant', args: [], desc: 'Driver No Occpuant' },
+  { category: 'Custom Library', name: 'SERControl_DriverOccpuant', args: [], desc: 'Driver Occpuant' },
+  { category: 'Custom Library', name: 'NioApp_Lock_Vehicle_With_Retry', args: [], desc: 'Lock Vehicle' },
+  { category: 'Custom Library', name: 'NT3_Wait_Util_VDF_Deep_Sleep', args: [], desc: 'Wait deep sleep' },
+  { category: 'Custom Library', name: 'Phone_ShortPress_Input_Password', args: ['button'], desc: 'HMIName Recovery time State' },
+  { category: 'Custom Library', name: 'PHY_OutCar_Pull', args: ['door'], desc: 'Pull door' },
+  { category: 'Custom Library', name: 'HMI_CheckButtonText', args: ['args'], desc: 'ButtonName ExpectText ExpectResult LastTime CheckByOldPicture' },
+  { category: 'Custom Library', name: '初始化连接', args: ['车内/外机械臂'], desc: '车内/外机械臂' },
+  { category: 'Custom Library', name: 'HMI_ShortPress_Button', args: ['button'], desc: 'HMIName Recovery time State' },
+  { category: 'Custom Library', name: 'sshCommond', args: ['channel', 'command','arg'], desc: 'Execute SSH command' },
+  { category: 'Custom Library', name: 'Should Be Equal As Strings', args: ['arg','rec_status'], desc: 'Execute SSH command' },
   { category: 'Custom', name: '空白模板 (Custom Code)', args: [], isCustomCode: true, desc: '手写代码' },
 ];
 
@@ -30,8 +43,12 @@ export default function App() {
   const [showCode, setShowCode] = useState(false);
   const [logs, setLogs] = useState([]);
   const [isRunning, setIsRunning] = useState(false);
-  const [globalVars, setGlobalVars] = useState([{ name: '${BASE_URL}', value: 'https://example.com' }]);
-  const [showGlobalVars, setShowGlobalVars] = useState(false);
+  
+  // Test Case Settings
+  const [testCaseName, setTestCaseName] = useState('休眠唤醒之后检查屏幕是否报错');
+  const [teardown, setTeardown] = useState('sshClose     ${SUITE START TIME}    ${SUITE_NAME}    ${TEST_NAME}');
+  const [globalVars, setGlobalVars] = useState([{ name: '${channel}', value: '1' }]);
+  const [showSettings, setShowSettings] = useState(false);
 
   // --- Tree Operations ---
   const findStep = (nodes, id) => {
@@ -87,7 +104,10 @@ export default function App() {
         keyword: keyword.name,
         isCustomCode: keyword.isCustomCode || false,
         isContainer: keyword.isContainer || false,
+        isComment: keyword.isComment || false,
         args: keyword.args ? keyword.args.reduce((acc, arg) => ({ ...acc, [arg]: '' }), {}) : {},
+        extraArgs: [],
+        modifier: '',
         customCode: '',
         outputVar: '',
         children: keyword.isContainer ? [] : undefined
@@ -119,11 +139,16 @@ export default function App() {
     const indent = '    '.repeat(indentLevel);
     
     nodes.forEach(step => {
-      if (step.isCustomCode) {
+      if (step.isComment) {
+        code += `${indent}# ${step.args.text}\n`;
+      } else if (step.isCustomCode) {
         step.customCode.split('\n').forEach(line => { code += `${indent}${line}\n`; });
       } else if (step.isContainer) {
         let line = `${indent}${step.keyword}`;
         Object.values(step.args).forEach(val => { if (val) line += `    ${val}`; });
+        if (step.extraArgs) {
+          step.extraArgs.forEach(val => { if (val) line += `    ${val}`; });
+        }
         code += line + '\n';
         
         if (step.children && step.children.length > 0) {
@@ -138,9 +163,13 @@ export default function App() {
         }
       } else {
         let line = indent;
-        if (step.outputVar) line += `${step.outputVar} =    `;
+        if (step.outputVar) line += `${step.outputVar}    `;
+        if (step.modifier) line += `${step.modifier}    `;
         line += step.keyword;
         Object.values(step.args).forEach(val => { if (val) line += `    ${val}`; });
+        if (step.extraArgs) {
+          step.extraArgs.forEach(val => { if (val) line += `    ${val}`; });
+        }
         code += line + '\n';
       }
     });
@@ -148,10 +177,24 @@ export default function App() {
   };
 
   const generateCode = () => {
-    let code = '*** Settings ***\nLibrary    SeleniumLibrary\n\n*** Variables ***\n';
-    globalVars.forEach(v => { if (v.name && v.value) code += `${v.name.padEnd(20)} ${v.value}\n`; });
-    code += '\n*** Test Cases ***\nDemo Visual Test Case\n    [Documentation]    Generated by Visual Editor\n';
+    let code = '*** Settings ***\n';
+    code += 'Resource          PreDefinedKey.robot\n';
+    code += 'Resource          Setting.resource\n\n';
+    
+    if (globalVars.length > 0 && globalVars.some(v => v.name)) {
+      code += '*** Variables ***\n';
+      globalVars.forEach(v => { if (v.name && v.value) code += `${v.name.padEnd(20)} ${v.value}\n`; });
+      code += '\n';
+    }
+
+    code += '*** Test Cases ***\n';
+    code += `${testCaseName || 'Demo Visual Test Case'}\n`;
     code += generateStepCode(steps, 1);
+    
+    if (teardown) {
+      code += `    [Teardown]    ${teardown}\n`;
+    }
+    
     return code;
   };
 
@@ -162,7 +205,7 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'demo_test.robot';
+    a.download = `${testCaseName || 'test_case'}.robot`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -193,58 +236,85 @@ export default function App() {
       return null;
     }
 
-    return nodes.map((step, index) => (
-      <div 
-        key={step.id}
-        onClick={(e) => { e.stopPropagation(); setSelectedStepId(step.id); }}
-        className={`group relative flex flex-col bg-white border rounded-lg shadow-sm cursor-pointer transition-all mb-2 ${selectedStepId === step.id ? 'border-[#F27D26] ring-1 ring-[#F27D26]' : 'border-gray-300 hover:border-gray-400'}`}
-      >
-        {/* Step Header */}
-        <div className="flex items-stretch">
-          <div className={`w-8 flex items-center justify-center border-r border-gray-100 text-gray-400 group-hover:text-gray-600 rounded-tl-lg ${step.isContainer ? 'bg-blue-50' : 'bg-gray-50'}`}>
-            <GripVertical size={16} />
+    return nodes.map((step, index) => {
+      if (step.isComment) {
+        return (
+          <div 
+            key={step.id}
+            onClick={(e) => { e.stopPropagation(); setSelectedStepId(step.id); }}
+            className={`group relative flex items-center bg-green-50/50 border rounded-lg shadow-sm cursor-pointer transition-all mb-2 px-3 py-2 ${selectedStepId === step.id ? 'border-green-500 ring-1 ring-green-500' : 'border-green-200 hover:border-green-300'}`}
+          >
+            <GripVertical size={16} className="text-green-400 mr-2 opacity-50 group-hover:opacity-100" />
+            <Hash size={14} className="text-green-600 mr-1" />
+            <span className="text-green-700 font-mono text-sm flex-1">{step.args.text || 'Comment'}</span>
+            <button onClick={(e) => handleDelete(e, step.id)} className="text-green-400 hover:text-red-500 opacity-0 group-hover:opacity-100"><Trash2 size={16} /></button>
           </div>
-          <div className="flex-1 p-3 flex flex-col justify-center">
-            <div className="flex items-center gap-2">
-              {step.isContainer && <CornerDownRight size={14} className="text-blue-500" />}
-              {step.outputVar && (
-                <span className="text-xs font-mono text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-100">
-                  {step.outputVar} =
-                </span>
-              )}
-              <span className={`text-sm font-bold ${step.isCustomCode ? 'text-blue-600' : step.isContainer ? 'text-blue-700' : 'text-gray-800'}`}>
-                {step.keyword}
-              </span>
-              {/* Inline Args */}
-              <div className="flex gap-2 ml-2">
-                {Object.entries(step.args).map(([key, val]) => val && (
-                  <span key={key} className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200">
-                    {key}: <span className="font-mono text-gray-800">{val}</span>
+        );
+      }
+
+      return (
+        <div 
+          key={step.id}
+          onClick={(e) => { e.stopPropagation(); setSelectedStepId(step.id); }}
+          className={`group relative flex flex-col bg-white border rounded-lg shadow-sm cursor-pointer transition-all mb-2 ${selectedStepId === step.id ? 'border-[#F27D26] ring-1 ring-[#F27D26]' : 'border-gray-300 hover:border-gray-400'}`}
+        >
+          {/* Step Header */}
+          <div className="flex items-stretch">
+            <div className={`w-8 flex items-center justify-center border-r border-gray-100 text-gray-400 group-hover:text-gray-600 rounded-tl-lg ${step.isContainer ? 'bg-blue-50' : 'bg-gray-50'}`}>
+              <GripVertical size={16} />
+            </div>
+            <div className="flex-1 p-3 flex flex-col justify-center">
+              <div className="flex items-center gap-2 flex-wrap">
+                {step.isContainer && <CornerDownRight size={14} className="text-blue-500" />}
+                {step.outputVar && (
+                  <span className="text-xs font-mono text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-100">
+                    {step.outputVar} =
                   </span>
-                ))}
+                )}
+                {step.modifier && (
+                  <span className="text-xs font-bold text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded border border-orange-100">
+                    {step.modifier}
+                  </span>
+                )}
+                <span className={`text-sm font-bold ${step.isCustomCode ? 'text-blue-600' : step.isContainer ? 'text-blue-700' : 'text-gray-800'}`}>
+                  {step.keyword}
+                </span>
+                {/* Inline Args */}
+                <div className="flex gap-2 ml-2 flex-wrap">
+                  {Object.entries(step.args).map(([key, val]) => val && (
+                    <span key={key} className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200">
+                      {key}: <span className="font-mono text-gray-800">{val}</span>
+                    </span>
+                  ))}
+                  {(step.extraArgs || []).map((val, idx) => val && (
+                    <span key={`extra_${idx}`} className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200">
+                      arg{idx+1}: <span className="font-mono text-gray-800">{val}</span>
+                    </span>
+                  ))}
+                </div>
               </div>
             </div>
+            <button 
+              onClick={(e) => handleDelete(e, step.id)}
+              className="w-10 flex items-center justify-center text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-tr-lg transition-colors opacity-0 group-hover:opacity-100"
+            >
+              <Trash2 size={16} />
+            </button>
           </div>
-          <button 
-            onClick={(e) => handleDelete(e, step.id)}
-            className="w-10 flex items-center justify-center text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-tr-lg transition-colors opacity-0 group-hover:opacity-100"
-          >
-            <Trash2 size={16} />
-          </button>
-        </div>
 
-        {/* Container Body (Nested Dropzone) */}
-        {step.isContainer && (
-          <div 
-            className="ml-8 mr-2 mb-2 p-2 border-l-2 border-blue-300 bg-blue-50/30 rounded-r min-h-[40px]"
-            onDrop={(e) => handleDrop(e, step.id)}
-            onDragOver={handleDragOver}
-          >
-            {renderSteps(step.children, step.id)}
-          </div>
-        )}
-      </div>
-    ));
+          {/* Container Body (Nested Dropzone) */}
+          {step.isContainer && (
+            <div 
+              className="ml-8 mr-2 mb-2 p-2 border-l-2 border-blue-300 bg-blue-50/30 rounded-r min-h-[40px]"
+              onDrop={(e) => handleDrop(e, step.id)}
+              onDragOver={handleDragOver}
+            >
+              {renderSteps(step.children, step.id)}
+            </div>
+          )}
+        </div>
+      );
+    });
   };
 
   const filteredLibrary = KEYWORD_LIBRARY.filter(kw => kw.name.toLowerCase().includes(searchQuery.toLowerCase()));
@@ -289,9 +359,10 @@ export default function App() {
                 <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2 px-1">{cat}</div>
                 <div className="space-y-1">
                   {filteredLibrary.filter(kw => kw.category === cat).map(kw => (
-                    <div key={kw.name} draggable onDragStart={(e) => handleDragStart(e, kw)} className={`px-3 py-2 text-xs border rounded cursor-grab active:cursor-grabbing hover:shadow-sm transition-all ${kw.isContainer ? 'bg-blue-50 border-blue-200 text-blue-800 border-l-4 border-l-blue-500' : kw.isCustomCode ? 'bg-purple-50 border-purple-200 text-purple-800' : 'bg-gray-50 border-gray-200 hover:border-gray-300'}`} title={kw.desc}>
+                    <div key={kw.name} draggable onDragStart={(e) => handleDragStart(e, kw)} className={`px-3 py-2 text-xs border rounded cursor-grab active:cursor-grabbing hover:shadow-sm transition-all ${kw.isContainer ? 'bg-blue-50 border-blue-200 text-blue-800 border-l-4 border-l-blue-500' : kw.isComment ? 'bg-green-50 border-green-200 text-green-800' : kw.isCustomCode ? 'bg-purple-50 border-purple-200 text-purple-800' : 'bg-gray-50 border-gray-200 hover:border-gray-300'}`} title={kw.desc}>
                       <div className="font-medium flex items-center gap-1">
                         {kw.isContainer && <CornerDownRight size={12} />}
+                        {kw.isComment && <Hash size={12} />}
                         {kw.name}
                       </div>
                     </div>
@@ -313,23 +384,36 @@ export default function App() {
           ) : (
             <div className="flex-1 p-6 overflow-y-auto" onDrop={(e) => handleDrop(e, null)} onDragOver={handleDragOver}>
               <div className="max-w-3xl mx-auto min-h-full pb-32">
-                {/* Global Vars */}
+                {/* Test Case Settings */}
                 <div className="mb-6 bg-white border border-gray-300 rounded-lg shadow-sm overflow-hidden">
-                  <div className="px-4 py-2 bg-gray-100 border-b border-gray-200 flex items-center justify-between cursor-pointer hover:bg-gray-200 transition-colors" onClick={() => setShowGlobalVars(!showGlobalVars)}>
-                    <div className="flex items-center gap-2 text-sm font-bold text-gray-700"><Settings size={16} /> 全局变量配置 (Suite Variables)</div>
-                    {showGlobalVars ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                  <div className="px-4 py-2 bg-gray-100 border-b border-gray-200 flex items-center justify-between cursor-pointer hover:bg-gray-200 transition-colors" onClick={() => setShowSettings(!showSettings)}>
+                    <div className="flex items-center gap-2 text-sm font-bold text-gray-700"><Settings size={16} /> 测试用例设置 (Test Case Settings)</div>
+                    {showSettings ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                   </div>
-                  {showGlobalVars && (
-                    <div className="p-4 space-y-2">
-                      {globalVars.map((v, i) => (
-                        <div key={i} className="flex items-center gap-2">
-                          <input type="text" value={v.name} onChange={(e) => { const newVars = [...globalVars]; newVars[i].name = e.target.value; setGlobalVars(newVars); }} placeholder="${VAR_NAME}" className="w-1/3 px-2 py-1 text-xs font-mono border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" />
-                          <span className="text-gray-400">=</span>
-                          <input type="text" value={v.value} onChange={(e) => { const newVars = [...globalVars]; newVars[i].value = e.target.value; setGlobalVars(newVars); }} placeholder="Value" className="flex-1 px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" />
-                          <button onClick={() => setGlobalVars(globalVars.filter((_, idx) => idx !== i))} className="p-1 text-gray-400 hover:text-red-500"><X size={14} /></button>
+                  {showSettings && (
+                    <div className="p-4 space-y-4">
+                      <div>
+                        <label className="block text-xs font-bold text-gray-700 mb-1">用例名称 (Test Case Name)</label>
+                        <input type="text" value={testCaseName} onChange={(e) => setTestCaseName(e.target.value)} className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-gray-700 mb-1">全局变量 (Suite Variables)</label>
+                        <div className="space-y-2">
+                          {globalVars.map((v, i) => (
+                            <div key={i} className="flex items-center gap-2">
+                              <input type="text" value={v.name} onChange={(e) => { const newVars = [...globalVars]; newVars[i].name = e.target.value; setGlobalVars(newVars); }} placeholder="${VAR_NAME}" className="w-1/3 px-2 py-1 text-xs font-mono border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" />
+                              <span className="text-gray-400">=</span>
+                              <input type="text" value={v.value} onChange={(e) => { const newVars = [...globalVars]; newVars[i].value = e.target.value; setGlobalVars(newVars); }} placeholder="Value" className="flex-1 px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" />
+                              <button onClick={() => setGlobalVars(globalVars.filter((_, idx) => idx !== i))} className="p-1 text-gray-400 hover:text-red-500"><X size={14} /></button>
+                            </div>
+                          ))}
+                          <button onClick={() => setGlobalVars([...globalVars, { name: '', value: '' }])} className="flex items-center gap-1 text-xs text-[#F27D26] font-medium hover:underline mt-2"><Plus size={12} /> 添加变量</button>
                         </div>
-                      ))}
-                      <button onClick={() => setGlobalVars([...globalVars, { name: '', value: '' }])} className="flex items-center gap-1 text-xs text-[#F27D26] font-medium hover:underline mt-2"><Plus size={12} /> 添加变量</button>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-gray-700 mb-1">清理步骤 (Teardown)</label>
+                        <input type="text" value={teardown} onChange={(e) => setTeardown(e.target.value)} className="w-full px-2 py-1.5 text-xs font-mono border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" placeholder="例如: sshClose     ${SUITE START TIME}" />
+                      </div>
                     </div>
                   )}
                 </div>
@@ -369,11 +453,22 @@ export default function App() {
                   <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">当前关键字</label>
                   <div className="text-sm font-bold text-gray-800 flex items-center gap-1">
                     {selectedStep.isContainer && <CornerDownRight size={14} className="text-blue-500" />}
+                    {selectedStep.isComment && <Hash size={14} className="text-green-600" />}
                     {selectedStep.keyword}
                   </div>
                 </div>
 
-                {selectedStep.isCustomCode ? (
+                {selectedStep.isComment ? (
+                  <div className="pt-2 border-t border-gray-100">
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-3">注释内容 (Comment Text)</label>
+                    <textarea 
+                      value={selectedStep.args.text || ''}
+                      onChange={(e) => updateStep(selectedStep.id, { args: { text: e.target.value } })}
+                      className="w-full h-24 p-2 text-xs border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]"
+                      placeholder="输入注释内容..."
+                    />
+                  </div>
+                ) : selectedStep.isCustomCode ? (
                   <div>
                     <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">原生代码</label>
                     <textarea value={selectedStep.customCode} onChange={(e) => updateStep(selectedStep.id, { customCode: e.target.value })} className="w-full h-48 p-2 text-xs font-mono border border-gray-300 rounded focus:outline-none focus:border-[#F27D26] bg-gray-50" />
@@ -383,7 +478,7 @@ export default function App() {
                     <div className="pt-2 border-t border-gray-100">
                       <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-3">输入参数 (Arguments)</label>
                       {Object.keys(selectedStep.args).length === 0 ? (
-                        <div className="text-xs text-gray-400 italic">此关键字无参数</div>
+                        <div className="text-xs text-gray-400 italic">此关键字无预设参数</div>
                       ) : (
                         <div className="space-y-3">
                           {Object.keys(selectedStep.args).map(argName => (
@@ -395,6 +490,51 @@ export default function App() {
                         </div>
                       )}
                     </div>
+
+                    {!selectedStep.isContainer && (
+                      <div className="pt-4 border-t border-gray-100">
+                        <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">执行修饰符 (Modifier)</label>
+                        <select
+                          value={selectedStep.modifier || ''}
+                          onChange={(e) => updateStep(selectedStep.id, { modifier: e.target.value })}
+                          className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:border-[#F27D26] bg-white"
+                        >
+                          <option value="">无 (None)</option>
+                          <option value="Run Keyword And Continue On Failure">Run Keyword And Continue On Failure</option>
+                          <option value="Run Keyword And Ignore Error">Run Keyword And Ignore Error</option>
+                          <option value="Wait Until Keyword Succeeds">Wait Until Keyword Succeeds</option>
+                        </select>
+                      </div>
+                    )}
+
+                    <div className="pt-4 border-t border-gray-100">
+                      <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">附加参数 (Extra Args)</label>
+                      {(selectedStep.extraArgs || []).map((arg, idx) => (
+                        <div key={idx} className="flex items-center gap-2 mb-2">
+                          <input
+                            type="text"
+                            value={arg}
+                            onChange={(e) => {
+                              const newArgs = [...(selectedStep.extraArgs || [])];
+                              newArgs[idx] = e.target.value;
+                              updateStep(selectedStep.id, { extraArgs: newArgs });
+                            }}
+                            className="flex-1 px-2 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]"
+                            placeholder={`Arg ${idx + 1}`}
+                          />
+                          <button onClick={() => {
+                            const newArgs = [...(selectedStep.extraArgs || [])];
+                            newArgs.splice(idx, 1);
+                            updateStep(selectedStep.id, { extraArgs: newArgs });
+                          }} className="p-1 text-gray-400 hover:text-red-500"><X size={14} /></button>
+                        </div>
+                      ))}
+                      <button onClick={() => {
+                        const newArgs = [...(selectedStep.extraArgs || []), ''];
+                        updateStep(selectedStep.id, { extraArgs: newArgs });
+                      }} className="flex items-center gap-1 text-xs text-[#F27D26] font-medium hover:underline"><Plus size={12} /> 添加参数</button>
+                    </div>
+
                     {!selectedStep.isContainer && (
                       <div className="pt-4 border-t border-gray-100">
                         <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">输出变量 (Return Value)</label>
