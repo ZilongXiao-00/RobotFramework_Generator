@@ -28,7 +28,7 @@ const KEYWORD_LIBRARY = [
   { category: 'Custom Library', name: 'NT3_Wait_Util_VDF_Deep_Sleep', args: [], desc: 'Wait deep sleep' },
   { category: 'Custom Library', name: 'Phone_ShortPress_Input_Password', args: ['button'], desc: 'HMIName Recovery time State' },
   { category: 'Custom Library', name: 'PHY_OutCar_Pull', args: ['door'], desc: 'Pull door' },
-  { category: 'Custom Library', name: 'HMI_CheckButtonText', args: ['args'], desc: 'ButtonName ExpectText ExpectResult LastTime CheckByOldPicture' },
+  { category: 'Custom Library', name: 'HMI_CheckButtonText', args: ['text'], desc: 'ButtonName ExpectText ExpectResult LastTime CheckByOldPicture' },
   { category: 'Custom Library', name: '初始化连接', args: ['车内/外机械臂'], desc: '车内/外机械臂' },
   { category: 'Custom Library', name: 'HMI_ShortPress_Button', args: ['button'], desc: 'HMIName Recovery time State' },
   { category: 'Custom Library', name: 'sshCommond', args: ['channel', 'command','arg'], desc: 'Execute SSH command' },
@@ -44,6 +44,10 @@ export default function App() {
   const [logs, setLogs] = useState([]);
   const [isRunning, setIsRunning] = useState(false);
   
+  // Drag and drop state
+  const [draggedStepId, setDraggedStepId] = useState(null);
+  const [dropTarget, setDropTarget] = useState(null); // { id, position: 'before' | 'after' | 'inside' }
+
   // Test Case Settings
   const [testCaseName, setTestCaseName] = useState('休眠唤醒之后检查屏幕是否报错');
   const [teardown, setTeardown] = useState('sshClose     ${SUITE START TIME}    ${SUITE_NAME}    ${TEST_NAME}');
@@ -70,21 +74,87 @@ export default function App() {
     });
   };
 
-  const deleteNode = (nodes, id) => {
-    return nodes.filter(node => {
-      if (node.id === id) return false;
-      if (node.children) node.children = deleteNode(node.children, id);
-      return true;
+  const removeNode = (nodes, id) => {
+    let removedNode = null;
+    const filterNodes = (list) => {
+      return list.filter(node => {
+        if (node.id === id) {
+          removedNode = node;
+          return false;
+        }
+        if (node.children) {
+          node.children = filterNodes(node.children);
+        }
+        return true;
+      });
+    };
+    const newNodes = filterNodes(nodes);
+    return { newNodes, removedNode };
+  };
+
+  const insertNode = (nodes, targetId, position, newNode) => {
+    if (!targetId && position === 'append') {
+      return [...nodes, newNode];
+    }
+    
+    let result = [];
+    for (let node of nodes) {
+      if (node.id === targetId) {
+        if (position === 'before') {
+          result.push(newNode);
+          result.push(node);
+        } else if (position === 'after') {
+          result.push(node);
+          result.push(newNode);
+        } else if (position === 'inside') {
+          result.push({ ...node, children: [...(node.children || []), newNode] });
+        }
+      } else {
+        if (node.children) {
+          result.push({ ...node, children: insertNode(node.children, targetId, position, newNode) });
+        } else {
+          result.push(node);
+        }
+      }
+    }
+    return result;
+  };
+
+  const moveStep = (stepId, targetId, position) => {
+    setSteps(prev => {
+      const { newNodes, removedNode } = removeNode(prev, stepId);
+      if (!removedNode) return prev;
+      return insertNode(newNodes, targetId, position, removedNode);
     });
   };
 
-  const addNode = (nodes, parentId, newNode) => {
-    if (!parentId) return [...nodes, newNode];
-    return nodes.map(node => {
-      if (node.id === parentId) return { ...node, children: [...(node.children || []), newNode] };
-      if (node.children) return { ...node, children: addNode(node.children, parentId, newNode) };
-      return node;
-    });
+  const insertNewStep = (keyword, targetId, position) => {
+    const defaultArgs = {};
+    if (keyword.args) {
+      keyword.args.forEach(arg => {
+        if (keyword.name === 'sshCommond' && arg === 'channel') defaultArgs[arg] = '${channel}';
+        else if (keyword.name === 'Should Be Equal As Strings' && (arg === 'second' || arg === 'rec_status')) defaultArgs[arg] = 'success';
+        else if (keyword.name === 'FOR' && arg === 'IN') defaultArgs[arg] = 'IN RANGE';
+        else defaultArgs[arg] = '';
+      });
+    }
+
+    const newStep = {
+      id: `step_${Date.now()}`,
+      keyword: keyword.name,
+      isCustomCode: keyword.isCustomCode || false,
+      isContainer: keyword.isContainer || false,
+      isComment: keyword.isComment || false,
+      args: defaultArgs,
+      extraArgs: [],
+      modifier: '',
+      customCode: '',
+      outputVars: [],
+      children: keyword.isContainer ? [] : undefined
+    };
+
+    setSteps(prev => insertNode(prev, targetId, position, newStep));
+    setSelectedStepId(newStep.id);
   };
 
   // --- Drag and Drop ---
@@ -93,27 +163,62 @@ export default function App() {
     e.stopPropagation();
   };
 
-  const handleDrop = (e, parentId = null) => {
+  const handleStepDragStart = (e, id) => {
+    e.dataTransfer.setData('stepId', id);
+    setDraggedStepId(id);
+    e.stopPropagation();
+  };
+
+  const handleStepDragOver = (e, id, isContainer) => {
     e.preventDefault();
     e.stopPropagation();
-    const data = e.dataTransfer.getData('application/json');
-    if (data) {
-      const keyword = JSON.parse(data);
-      const newStep = {
-        id: `step_${Date.now()}`,
-        keyword: keyword.name,
-        isCustomCode: keyword.isCustomCode || false,
-        isContainer: keyword.isContainer || false,
-        isComment: keyword.isComment || false,
-        args: keyword.args ? keyword.args.reduce((acc, arg) => ({ ...acc, [arg]: '' }), {}) : {},
-        extraArgs: [],
-        modifier: '',
-        customCode: '',
-        outputVar: '',
-        children: keyword.isContainer ? [] : undefined
-      };
-      setSteps(prev => addNode(prev, parentId, newStep));
-      setSelectedStepId(newStep.id);
+    if (draggedStepId === id) return;
+    
+    const rect = e.currentTarget.getBoundingClientRect();
+    const y = e.clientY - rect.top;
+    
+    let position = 'after';
+    if (y < rect.height * 0.25) {
+      position = 'before';
+    } else if (isContainer && y < rect.height * 0.75) {
+      position = 'inside';
+    }
+    
+    setDropTarget({ id, position });
+  };
+
+  const handleStepDrop = (e, targetId) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDropTarget(null);
+    setDraggedStepId(null);
+    
+    const stepId = e.dataTransfer.getData('stepId');
+    const keywordData = e.dataTransfer.getData('application/json');
+    
+    if (stepId) {
+      if (stepId === targetId) return;
+      moveStep(stepId, targetId, dropTarget?.position || 'after');
+    } else if (keywordData) {
+      const keyword = JSON.parse(keywordData);
+      insertNewStep(keyword, targetId, dropTarget?.position || 'after');
+    }
+  };
+
+  const handleCanvasDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDropTarget(null);
+    setDraggedStepId(null);
+    
+    const stepId = e.dataTransfer.getData('stepId');
+    const keywordData = e.dataTransfer.getData('application/json');
+    
+    if (stepId) {
+      moveStep(stepId, null, 'append');
+    } else if (keywordData) {
+      const keyword = JSON.parse(keywordData);
+      insertNewStep(keyword, null, 'append');
     }
   };
 
@@ -122,12 +227,20 @@ export default function App() {
     e.stopPropagation();
   };
 
+  const handleDragEnd = () => {
+    setDraggedStepId(null);
+    setDropTarget(null);
+  };
+
   // --- Handlers ---
   const updateStep = (id, updates) => setSteps(prev => updateNode(prev, id, updates));
   
   const handleDelete = (e, id) => {
     e.stopPropagation();
-    setSteps(prev => deleteNode(prev, id));
+    setSteps(prev => {
+      const { newNodes } = removeNode(prev, id);
+      return newNodes;
+    });
     if (selectedStepId === id) setSelectedStepId(null);
   };
 
@@ -163,7 +276,16 @@ export default function App() {
         }
       } else {
         let line = indent;
-        if (step.outputVar) line += `${step.outputVar}    `;
+        
+        if (step.outputVars && step.outputVars.length > 0) {
+          const validVars = step.outputVars.filter(v => v.trim() !== '');
+          if (validVars.length > 0) {
+            line += validVars.join('    ') + '    ';
+          }
+        } else if (step.outputVar) {
+          line += `${step.outputVar}    `;
+        }
+
         if (step.modifier) line += `${step.modifier}    `;
         line += step.keyword;
         Object.values(step.args).forEach(val => { if (val) line += `    ${val}`; });
@@ -237,82 +359,114 @@ export default function App() {
     }
 
     return nodes.map((step, index) => {
+      const isDragTarget = dropTarget?.id === step.id;
+
       if (step.isComment) {
         return (
-          <div 
-            key={step.id}
-            onClick={(e) => { e.stopPropagation(); setSelectedStepId(step.id); }}
-            className={`group relative flex items-center bg-green-50/50 border rounded-lg shadow-sm cursor-pointer transition-all mb-2 px-3 py-2 ${selectedStepId === step.id ? 'border-green-500 ring-1 ring-green-500' : 'border-green-200 hover:border-green-300'}`}
-          >
-            <GripVertical size={16} className="text-green-400 mr-2 opacity-50 group-hover:opacity-100" />
-            <Hash size={14} className="text-green-600 mr-1" />
-            <span className="text-green-700 font-mono text-sm flex-1">{step.args.text || 'Comment'}</span>
-            <button onClick={(e) => handleDelete(e, step.id)} className="text-green-400 hover:text-red-500 opacity-0 group-hover:opacity-100"><Trash2 size={16} /></button>
-          </div>
+          <React.Fragment key={step.id}>
+            {isDragTarget && dropTarget.position === 'before' && (
+              <div className="h-1 bg-[#F27D26] rounded my-1"></div>
+            )}
+            <div 
+              draggable
+              onDragStart={(e) => handleStepDragStart(e, step.id)}
+              onDragOver={(e) => handleStepDragOver(e, step.id, false)}
+              onDrop={(e) => handleStepDrop(e, step.id)}
+              onDragEnd={handleDragEnd}
+              onClick={(e) => { e.stopPropagation(); setSelectedStepId(step.id); }}
+              className={`group relative flex items-center bg-green-50/50 border rounded-lg shadow-sm cursor-pointer transition-all mb-2 px-3 py-2 ${selectedStepId === step.id ? 'border-green-500 ring-1 ring-green-500' : 'border-green-200 hover:border-green-300'} ${draggedStepId === step.id ? 'opacity-50' : ''}`}
+            >
+              <GripVertical size={16} className="text-green-400 mr-2 opacity-50 group-hover:opacity-100 cursor-grab active:cursor-grabbing" />
+              <Hash size={14} className="text-green-600 mr-1" />
+              <span className="text-green-700 font-mono text-sm flex-1">{step.args.text || 'Comment'}</span>
+              <button onClick={(e) => handleDelete(e, step.id)} className="text-green-400 hover:text-red-500 opacity-0 group-hover:opacity-100"><Trash2 size={16} /></button>
+            </div>
+            {isDragTarget && dropTarget.position === 'after' && (
+              <div className="h-1 bg-[#F27D26] rounded my-1"></div>
+            )}
+          </React.Fragment>
         );
       }
 
       return (
-        <div 
-          key={step.id}
-          onClick={(e) => { e.stopPropagation(); setSelectedStepId(step.id); }}
-          className={`group relative flex flex-col bg-white border rounded-lg shadow-sm cursor-pointer transition-all mb-2 ${selectedStepId === step.id ? 'border-[#F27D26] ring-1 ring-[#F27D26]' : 'border-gray-300 hover:border-gray-400'}`}
-        >
-          {/* Step Header */}
-          <div className="flex items-stretch">
-            <div className={`w-8 flex items-center justify-center border-r border-gray-100 text-gray-400 group-hover:text-gray-600 rounded-tl-lg ${step.isContainer ? 'bg-blue-50' : 'bg-gray-50'}`}>
-              <GripVertical size={16} />
-            </div>
-            <div className="flex-1 p-3 flex flex-col justify-center">
-              <div className="flex items-center gap-2 flex-wrap">
-                {step.isContainer && <CornerDownRight size={14} className="text-blue-500" />}
-                {step.outputVar && (
-                  <span className="text-xs font-mono text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-100">
-                    {step.outputVar} =
-                  </span>
-                )}
-                {step.modifier && (
-                  <span className="text-xs font-bold text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded border border-orange-100">
-                    {step.modifier}
-                  </span>
-                )}
-                <span className={`text-sm font-bold ${step.isCustomCode ? 'text-blue-600' : step.isContainer ? 'text-blue-700' : 'text-gray-800'}`}>
-                  {step.keyword}
-                </span>
-                {/* Inline Args */}
-                <div className="flex gap-2 ml-2 flex-wrap">
-                  {Object.entries(step.args).map(([key, val]) => val && (
-                    <span key={key} className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200">
-                      {key}: <span className="font-mono text-gray-800">{val}</span>
+        <React.Fragment key={step.id}>
+          {isDragTarget && dropTarget.position === 'before' && (
+            <div className="h-1 bg-[#F27D26] rounded my-1"></div>
+          )}
+          <div 
+            draggable
+            onDragStart={(e) => handleStepDragStart(e, step.id)}
+            onDragOver={(e) => handleStepDragOver(e, step.id, step.isContainer)}
+            onDrop={(e) => handleStepDrop(e, step.id)}
+            onDragEnd={handleDragEnd}
+            onClick={(e) => { e.stopPropagation(); setSelectedStepId(step.id); }}
+            className={`group relative flex flex-col bg-white border rounded-lg shadow-sm cursor-pointer transition-all mb-2 ${selectedStepId === step.id ? 'border-[#F27D26] ring-1 ring-[#F27D26]' : 'border-gray-300 hover:border-gray-400'} ${draggedStepId === step.id ? 'opacity-50' : ''} ${isDragTarget && dropTarget.position === 'inside' ? 'ring-2 ring-[#F27D26]' : ''}`}
+          >
+            {/* Step Header */}
+            <div className="flex items-stretch">
+              <div className={`w-8 flex items-center justify-center border-r border-gray-100 text-gray-400 group-hover:text-gray-600 rounded-tl-lg cursor-grab active:cursor-grabbing ${step.isContainer ? 'bg-blue-50' : 'bg-gray-50'}`}>
+                <GripVertical size={16} />
+              </div>
+              <div className="flex-1 p-3 flex flex-col justify-center">
+                <div className="flex items-center gap-2 flex-wrap">
+                  {step.isContainer && <CornerDownRight size={14} className="text-blue-500" />}
+                  
+                  {(step.outputVars || []).filter(v => v).length > 0 ? (
+                    <span className="text-xs font-mono text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-100">
+                      {step.outputVars.filter(v => v).join(', ')} =
                     </span>
-                  ))}
-                  {(step.extraArgs || []).map((val, idx) => val && (
-                    <span key={`extra_${idx}`} className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200">
-                      arg{idx+1}: <span className="font-mono text-gray-800">{val}</span>
+                  ) : step.outputVar ? (
+                    <span className="text-xs font-mono text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-100">
+                      {step.outputVar} =
                     </span>
-                  ))}
+                  ) : null}
+
+                  {step.modifier && (
+                    <span className="text-xs font-bold text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded border border-orange-100">
+                      {step.modifier}
+                    </span>
+                  )}
+                  <span className={`text-sm font-bold ${step.isCustomCode ? 'text-blue-600' : step.isContainer ? 'text-blue-700' : 'text-gray-800'}`}>
+                    {step.keyword}
+                  </span>
+                  {/* Inline Args */}
+                  <div className="flex gap-2 ml-2 flex-wrap">
+                    {Object.entries(step.args).map(([key, val]) => val && (
+                      <span key={key} className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200">
+                        {key}: <span className="font-mono text-gray-800">{val}</span>
+                      </span>
+                    ))}
+                    {(step.extraArgs || []).map((val, idx) => val && (
+                      <span key={`extra_${idx}`} className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200">
+                        arg{idx+1}: <span className="font-mono text-gray-800">{val}</span>
+                      </span>
+                    ))}
+                  </div>
                 </div>
               </div>
+              <button 
+                onClick={(e) => handleDelete(e, step.id)}
+                className="w-10 flex items-center justify-center text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-tr-lg transition-colors opacity-0 group-hover:opacity-100"
+              >
+                <Trash2 size={16} />
+              </button>
             </div>
-            <button 
-              onClick={(e) => handleDelete(e, step.id)}
-              className="w-10 flex items-center justify-center text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-tr-lg transition-colors opacity-0 group-hover:opacity-100"
-            >
-              <Trash2 size={16} />
-            </button>
-          </div>
 
-          {/* Container Body (Nested Dropzone) */}
-          {step.isContainer && (
-            <div 
-              className="ml-8 mr-2 mb-2 p-2 border-l-2 border-blue-300 bg-blue-50/30 rounded-r min-h-[40px]"
-              onDrop={(e) => handleDrop(e, step.id)}
-              onDragOver={handleDragOver}
-            >
-              {renderSteps(step.children, step.id)}
-            </div>
+            {/* Container Body (Nested Dropzone) */}
+            {step.isContainer && (
+              <div 
+                className="ml-8 mr-2 mb-2 p-2 border-l-2 border-blue-300 bg-blue-50/30 rounded-r min-h-[40px]"
+                onDrop={(e) => handleStepDrop(e, step.id)}
+                onDragOver={(e) => handleStepDragOver(e, step.id, true)}
+              >
+                {renderSteps(step.children, step.id)}
+              </div>
+            )}
+          </div>
+          {isDragTarget && dropTarget.position === 'after' && (
+            <div className="h-1 bg-[#F27D26] rounded my-1"></div>
           )}
-        </div>
+        </React.Fragment>
       );
     });
   };
@@ -382,7 +536,7 @@ export default function App() {
               </div>
             </div>
           ) : (
-            <div className="flex-1 p-6 overflow-y-auto" onDrop={(e) => handleDrop(e, null)} onDragOver={handleDragOver}>
+            <div className="flex-1 p-6 overflow-y-auto" onDrop={handleCanvasDrop} onDragOver={handleDragOver}>
               <div className="max-w-3xl mx-auto min-h-full pb-32">
                 {/* Test Case Settings */}
                 <div className="mb-6 bg-white border border-gray-300 rounded-lg shadow-sm overflow-hidden">
@@ -537,8 +691,38 @@ export default function App() {
 
                     {!selectedStep.isContainer && (
                       <div className="pt-4 border-t border-gray-100">
-                        <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">输出变量 (Return Value)</label>
-                        <input type="text" value={selectedStep.outputVar} onChange={(e) => updateStep(selectedStep.id, { outputVar: e.target.value })} className="w-full px-2 py-1.5 text-xs font-mono border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" placeholder="例如: ${result}" />
+                        <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">输出变量 (Return Values)</label>
+                        {(selectedStep.outputVars || []).map((v, idx) => (
+                          <div key={idx} className="flex items-center gap-2 mb-2">
+                            <input
+                              type="text"
+                              value={v}
+                              onChange={(e) => {
+                                const newVars = [...(selectedStep.outputVars || [])];
+                                newVars[idx] = e.target.value;
+                                updateStep(selectedStep.id, { outputVars: newVars });
+                              }}
+                              className="flex-1 px-2 py-1.5 text-xs font-mono border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]"
+                              placeholder="例如: ${result}"
+                            />
+                            <button onClick={() => {
+                              const newVars = [...(selectedStep.outputVars || [])];
+                              newVars.splice(idx, 1);
+                              updateStep(selectedStep.id, { outputVars: newVars });
+                            }} className="p-1 text-gray-400 hover:text-red-500"><X size={14} /></button>
+                          </div>
+                        ))}
+                        <button onClick={() => {
+                          const newVars = [...(selectedStep.outputVars || []), ''];
+                          updateStep(selectedStep.id, { outputVars: newVars });
+                        }} className="flex items-center gap-1 text-xs text-[#F27D26] font-medium hover:underline"><Plus size={12} /> 添加输出变量</button>
+                        
+                        {/* Legacy support for single outputVar if it exists */}
+                        {selectedStep.outputVar && (!selectedStep.outputVars || selectedStep.outputVars.length === 0) && (
+                          <div className="mt-2">
+                            <input type="text" value={selectedStep.outputVar} onChange={(e) => updateStep(selectedStep.id, { outputVar: e.target.value })} className="w-full px-2 py-1.5 text-xs font-mono border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" placeholder="例如: ${result}" />
+                          </div>
+                        )}
                       </div>
                     )}
                   </>
