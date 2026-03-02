@@ -1,12 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { 
   Play, Code, Search, Settings, FileText, 
   Terminal, ChevronRight, ChevronDown, Trash2, GripVertical,
-  Plus, X, CornerDownRight, Download, Hash
+  Plus, X, CornerDownRight, Download, Hash, Upload
 } from 'lucide-react';
 
 // --- Mock Data ---
-const KEYWORD_LIBRARY = [
+const INITIAL_KEYWORD_LIBRARY = [
   { category: 'Control Flow', name: 'IF', args: ['condition'], desc: 'IF statement', isContainer: true },
   { category: 'Control Flow', name: 'ELSE IF', args: ['condition'], desc: 'ELSE IF statement', isContainer: true },
   { category: 'Control Flow', name: 'ELSE', args: [], desc: 'ELSE statement', isContainer: true },
@@ -22,21 +22,22 @@ const KEYWORD_LIBRARY = [
   { category: 'BuiltIn', name: 'Should Be Equal As Strings', args: ['first', 'second'], desc: 'Fails if objects are unequal after converting them to strings.' },
   { category: 'BuiltIn', name: 'Evaluate', args: ['expression'], desc: 'Evaluates the given expression in Python and returns the result.' },
   { category: 'BuiltIn', name: 'Comment', args: ['text'], desc: 'Adds a comment.', isComment: true },
-  { category: 'Custom Library', name: 'SERControl_DriverNoOccpuant', args: [], desc: 'Driver No Occpuant' },
-  { category: 'Custom Library', name: 'SERControl_DriverOccpuant', args: [], desc: 'Driver Occpuant' },
-  { category: 'Custom Library', name: 'NioApp_Lock_Vehicle_With_Retry', args: [], desc: 'Lock Vehicle' },
-  { category: 'Custom Library', name: 'NT3_Wait_Util_VDF_Deep_Sleep', args: [], desc: 'Wait deep sleep' },
-  { category: 'Custom Library', name: 'Phone_ShortPress_Input_Password', args: ['button'], desc: 'HMIName Recovery time State' },
-  { category: 'Custom Library', name: 'PHY_OutCar_Pull', args: ['door'], desc: 'Pull door' },
-  { category: 'Custom Library', name: 'HMI_CheckButtonText', args: ['text'], desc: 'ButtonName ExpectText ExpectResult LastTime CheckByOldPicture' },
-  { category: 'Custom Library', name: '初始化连接', args: ['车内/外机械臂'], desc: '车内/外机械臂' },
-  { category: 'Custom Library', name: 'HMI_ShortPress_Button', args: ['button'], desc: 'HMIName Recovery time State' },
+//   { category: 'Custom Library', name: 'SERControl_DriverNoOccpuant', args: [], desc: 'Driver No Occpuant' },
+//   { category: 'Custom Library', name: 'SERControl_DriverOccpuant', args: [], desc: 'Driver Occpuant' },
+//   { category: 'Custom Library', name: 'NioApp_Lock_Vehicle_With_Retry', args: [], desc: 'Lock Vehicle' },
+//   { category: 'Custom Library', name: 'NT3_Wait_Util_VDF_Deep_Sleep', args: [], desc: 'Wait deep sleep' },
+//   { category: 'Custom Library', name: 'Phone_ShortPress_Input_Password', args: ['button'], desc: 'HMIName Recovery time State' },
+//   { category: 'Custom Library', name: 'PHY_OutCar_Pull', args: ['door'], desc: 'Pull door' },
+//   { category: 'Custom Library', name: 'HMI_CheckButtonText', args: ['text'], desc: 'ButtonName ExpectText ExpectResult LastTime CheckByOldPicture' },
+//   { category: 'Custom Library', name: '初始化连接', args: ['车内/外机械臂'], desc: '车内/外机械臂' },
+//   { category: 'Custom Library', name: 'HMI_ShortPress_Button', args: ['button'], desc: 'HMIName Recovery time State' },
   { category: 'Custom Library', name: 'sshCommond', args: ['channel', 'command','arg'], desc: 'Execute SSH command' },
   { category: 'Custom Library', name: 'Should Be Equal As Strings', args: ['arg','rec_status'], desc: 'Execute SSH command' },
   { category: 'Custom', name: '空白模板 (Custom Code)', args: [], isCustomCode: true, desc: '手写代码' },
 ];
 
 export default function App() {
+  const [library, setLibrary] = useState(INITIAL_KEYWORD_LIBRARY);
   const [steps, setSteps] = useState([]);
   const [selectedStepId, setSelectedStepId] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -44,15 +45,63 @@ export default function App() {
   const [logs, setLogs] = useState([]);
   const [isRunning, setIsRunning] = useState(false);
   
+  const fileInputRef = useRef(null);
+
   // Drag and drop state
   const [draggedStepId, setDraggedStepId] = useState(null);
   const [dropTarget, setDropTarget] = useState(null); // { id, position: 'before' | 'after' | 'inside' }
 
   // Test Case Settings
-  const [testCaseName, setTestCaseName] = useState('休眠唤醒之后检查屏幕是否报错');
+  const [testCaseName, setTestCaseName] = useState('测试用例名称');
   const [teardown, setTeardown] = useState('sshClose     ${SUITE START TIME}    ${SUITE_NAME}    ${TEST_NAME}');
   const [globalVars, setGlobalVars] = useState([{ name: '${channel}', value: '1' }]);
   const [showSettings, setShowSettings] = useState(false);
+
+  // --- Import Keywords ---
+  const handleImportKeywords = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const json = JSON.parse(event.target.result);
+        const newKeywords = [];
+        
+        Object.keys(json).forEach(fileName => {
+          const keywords = json[fileName];
+          if (Array.isArray(keywords)) {
+            keywords.forEach(kw => {
+              newKeywords.push({
+                category: fileName, // Use the filename (e.g., PreDefinedKey.robot) as the category
+                name: kw.name,
+                args: kw.args || [],
+                desc: kw.doc || '',
+                isContainer: false,
+                isCustomCode: false,
+                isComment: false
+              });
+            });
+          }
+        });
+
+        // Merge with existing library, avoiding exact duplicates by name
+        setLibrary(prev => {
+          const existingNames = new Set(prev.map(k => k.name));
+          const uniqueNew = newKeywords.filter(k => !existingNames.has(k.name));
+          return [...prev, ...uniqueNew];
+        });
+        
+        setLogs(prev => [...prev, `[INFO] 成功导入 ${newKeywords.length} 个关键字来自 ${file.name}`]);
+      } catch (err) {
+        console.error(err);
+        setLogs(prev => [...prev, `[ERROR] 解析 JSON 文件失败: ${err.message}`]);
+      }
+      // Reset input so the same file can be uploaded again if needed
+      e.target.value = '';
+    };
+    reader.readAsText(file);
+  };
 
   // --- Tree Operations ---
   const findStep = (nodes, id) => {
@@ -471,7 +520,7 @@ export default function App() {
     });
   };
 
-  const filteredLibrary = KEYWORD_LIBRARY.filter(kw => kw.name.toLowerCase().includes(searchQuery.toLowerCase()));
+  const filteredLibrary = library.filter(kw => kw.name.toLowerCase().includes(searchQuery.toLowerCase()));
   const categories = [...new Set(filteredLibrary.map(kw => kw.category))];
 
   return (
@@ -502,9 +551,25 @@ export default function App() {
         {/* Left: Library */}
         <div className="w-64 bg-white border-r border-gray-300 flex flex-col shadow-sm z-10">
           <div className="p-3 border-b border-gray-200">
-            <div className="relative">
-              <Search size={14} className="absolute left-2.5 top-2 text-gray-400" />
-              <input type="text" placeholder="搜索关键字..." className="w-full pl-8 pr-3 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+            <div className="flex gap-2 mb-2">
+              <div className="relative flex-1">
+                <Search size={14} className="absolute left-2.5 top-2 text-gray-400" />
+                <input type="text" placeholder="搜索关键字..." className="w-full pl-8 pr-3 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+              </div>
+              <button 
+                onClick={() => fileInputRef.current?.click()}
+                className="px-2 py-1.5 bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded text-gray-600 flex items-center justify-center transition-colors"
+                title="导入 JSON 关键字"
+              >
+                <Upload size={14} />
+              </button>
+              <input 
+                type="file" 
+                accept=".json" 
+                ref={fileInputRef} 
+                style={{ display: 'none' }} 
+                onChange={handleImportKeywords} 
+              />
             </div>
           </div>
           <div className="flex-1 overflow-y-auto p-2 space-y-4">
