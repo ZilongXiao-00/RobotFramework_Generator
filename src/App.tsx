@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   Play, Code, Search, Settings, FileText, 
   Terminal, ChevronRight, ChevronDown, Trash2, GripVertical,
@@ -43,6 +43,8 @@ export default function App() {
   const [showCode, setShowCode] = useState(false);
   const [logs, setLogs] = useState([]);
   const [isRunning, setIsRunning] = useState(false);
+  const [showImportConfirm, setShowImportConfirm] = useState(false);
+  const [pendingImportFile, setPendingImportFile] = useState(null);
   
   const fileInputRef = useRef(null);
   const robotInputRef = useRef(null);
@@ -62,8 +64,15 @@ export default function App() {
     }
   ]);
   const [activeTestCaseId, setActiveTestCaseId] = useState('tc_1');
-  const [globalVars, setGlobalVars] = useState([{ name: '${channel}', value: '1' }]);
+  const [globalVars, setGlobalVars] = useState([]);
+  const [settingsSection, setSettingsSection] = useState("Resource          PreDefinedKey.robot\nResource          Setting.resource");
+  const [customKeywordsSection, setCustomKeywordsSection] = useState("");
   const [showSettings, setShowSettings] = useState(false);
+
+  const libraryRef = useRef(library);
+  useEffect(() => {
+    libraryRef.current = library;
+  }, [library]);
 
   const activeTestCase = testCases.find(tc => tc.id === activeTestCaseId) || testCases[0];
   const steps = activeTestCase.steps;
@@ -133,6 +142,20 @@ export default function App() {
     const file = e.target.files[0];
     if (!file) return;
 
+    setPendingImportFile(file);
+    setShowImportConfirm(true);
+    e.target.value = '';
+  };
+
+  const cancelImport = () => {
+    setShowImportConfirm(false);
+    setPendingImportFile(null);
+  };
+
+  const confirmImport = () => {
+    setShowImportConfirm(false);
+    if (!pendingImportFile) return;
+
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
@@ -157,6 +180,8 @@ export default function App() {
         let parsedTestCases = [];
         let currentTestCase = null;
         let blockStack = [];
+        let parsedSettings = [];
+        let parsedKeywords = [];
 
         const finalizeTestCase = () => {
           if (currentTestCase) {
@@ -210,7 +235,7 @@ export default function App() {
             currentIndex++;
           }
 
-          const libKw = library.find(k => k.name.toLowerCase() === keyword.toLowerCase());
+          const libKw = libraryRef.current.find(k => k.name.toLowerCase() === keyword.toLowerCase());
           const isContainer = libKw ? libKw.isContainer : ['IF', 'FOR', 'WHILE', 'ELSE IF', 'ELSE'].includes(keyword.toUpperCase());
 
           let namedArgs = {};
@@ -250,20 +275,31 @@ export default function App() {
           const line = lines[i];
           const trimmed = line.trim();
 
-          if (!trimmed) continue;
+          if (!trimmed && currentSection !== 'keywords' && currentSection !== 'settings') continue;
 
           if (trimmed.startsWith('***')) {
             const sectionName = trimmed.replace(/\*/g, '').trim().toLowerCase();
-            if (sectionName.includes('settings')) currentSection = 'settings';
-            else if (sectionName.includes('variables')) currentSection = 'variables';
-            else if (sectionName.includes('test cases')) {
+            if (sectionName.includes('settings')) {
+              currentSection = 'settings';
+              finalizeTestCase();
+            } else if (sectionName.includes('variables')) {
+              currentSection = 'variables';
+              finalizeTestCase();
+            } else if (sectionName.includes('test cases')) {
               currentSection = 'testcases';
+              finalizeTestCase();
+            } else if (sectionName.includes('keywords')) {
+              currentSection = 'keywords';
               finalizeTestCase();
             }
             continue;
           }
 
-          if (currentSection === 'variables') {
+          if (currentSection === 'settings') {
+            if (trimmed) parsedSettings.push(line);
+          } else if (currentSection === 'keywords') {
+            if (line.trim() || parsedKeywords.length > 0) parsedKeywords.push(line);
+          } else if (currentSection === 'variables') {
             const parts = trimmed.split(/\s{2,}|\t+/);
             if (parts.length >= 2) {
               parsedGlobalVars.push({ name: parts[0], value: parts[1] });
@@ -325,17 +361,26 @@ export default function App() {
           setTestCases(parsedTestCases);
           setActiveTestCaseId(parsedTestCases[0].id);
         }
-        if (parsedGlobalVars.length > 0) {
-          setGlobalVars(parsedGlobalVars);
+        setGlobalVars(parsedGlobalVars);
+        if (parsedSettings.length > 0) {
+          setSettingsSection(parsedSettings.join('\n'));
+        } else {
+          setSettingsSection("");
         }
-        setLogs(prev => [...prev, `[INFO] 成功导入并解析 Robot 文件: ${file.name}`]);
+        if (parsedKeywords.length > 0) {
+          setCustomKeywordsSection(parsedKeywords.join('\n'));
+        } else {
+          setCustomKeywordsSection("");
+        }
+        
+        setLogs(prev => [...prev, `[INFO] 成功导入并解析 Robot 文件: ${pendingImportFile.name}`]);
       } catch (err) {
         console.error(err);
         setLogs(prev => [...prev, `[ERROR] 解析 Robot 文件失败: ${err.message}`]);
       }
-      e.target.value = '';
+      setPendingImportFile(null);
     };
-    reader.readAsText(file);
+    reader.readAsText(pendingImportFile);
   };
 
   // --- Tree Operations ---
@@ -535,7 +580,7 @@ export default function App() {
     let code = '';
     const indent = '    '.repeat(indentLevel);
     
-    nodes.forEach(step => {
+    nodes.forEach((step, index) => {
       if (step.isComment) {
         code += `${indent}# ${step.args.text}\n`;
       } else if (step.isCustomCode) {
@@ -555,8 +600,15 @@ export default function App() {
         }
         
         // RF requires END for IF/FOR/WHILE
-        if (!['ELSE IF', 'ELSE'].includes(step.keyword)) {
-          code += `${indent}END\n`;
+        const kwUpper = step.keyword.toUpperCase();
+        if (['FOR', 'WHILE', 'IF', 'ELSE IF', 'ELSE'].includes(kwUpper)) {
+          const nextStep = nodes[index + 1];
+          const isIfChain = ['IF', 'ELSE IF', 'ELSE'].includes(kwUpper);
+          const hasNextElse = isIfChain && nextStep && ['ELSE IF', 'ELSE'].includes(nextStep.keyword.toUpperCase());
+          
+          if (!hasNextElse) {
+            code += `${indent}END\n`;
+          }
         }
       } else {
         let line = indent;
@@ -584,8 +636,10 @@ export default function App() {
 
   const generateCode = () => {
     let code = '*** Settings ***\n';
-    code += 'Resource          PreDefinedKey.robot\n';
-    code += 'Resource          Setting.resource\n\n';
+    if (settingsSection) {
+      code += settingsSection + '\n';
+    }
+    code += '\n';
     
     if (globalVars.length > 0 && globalVars.some(v => v.name)) {
       code += '*** Variables ***\n';
@@ -607,6 +661,11 @@ export default function App() {
       }
       code += '\n';
     });
+    
+    if (customKeywordsSection.trim()) {
+      code += '*** Keywords ***\n';
+      code += customKeywordsSection + '\n';
+    }
     
     return code;
   };
@@ -767,6 +826,30 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-screen bg-[#E4E3E0] text-[#141414] font-sans overflow-hidden">
+      {/* Import Confirmation Modal */}
+      {showImportConfirm && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+          <div className="bg-white rounded-lg p-6 shadow-xl max-w-md w-full">
+            <h3 className="text-lg font-bold text-gray-900 mb-2">确认导入</h3>
+            <p className="text-sm text-gray-600 mb-6">导入将覆盖当前画布中的所有内容，是否继续？</p>
+            <div className="flex justify-end gap-3">
+              <button 
+                onClick={cancelImport}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-md"
+              >
+                取消
+              </button>
+              <button 
+                onClick={confirmImport}
+                className="px-4 py-2 text-sm font-medium text-white bg-[#F27D26] hover:bg-[#d96b1c] rounded-md"
+              >
+                确认导入
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <header className="flex items-center justify-between px-4 py-3 bg-[#141414] text-[#E4E3E0] shadow-md z-10">
         <div className="flex items-center gap-3">
@@ -857,7 +940,9 @@ export default function App() {
                       onClick={() => setActiveTestCaseId(tc.id)}
                       className={`group flex items-center gap-2 px-4 py-2 rounded-t-lg border-t border-l border-r cursor-pointer whitespace-nowrap transition-colors ${activeTestCaseId === tc.id ? 'bg-white border-gray-300 text-[#F27D26] font-bold relative top-[1px]' : 'bg-gray-100 border-transparent text-gray-600 hover:bg-gray-200'}`}
                     >
-                      {tc.name || '未命名用例'}
+                      <span className="max-w-[200px] truncate" title={tc.name || '未命名用例'}>
+                        {tc.name || '未命名用例'}
+                      </span>
                       {testCases.length > 1 && (
                         <button 
                           onClick={(e) => {
@@ -902,18 +987,40 @@ export default function App() {
                   {showSettings && (
                     <div className="p-4 space-y-4">
                       {/* Suite Settings */}
-                      <div className="pb-4 border-b border-gray-100">
-                        <label className="block text-xs font-bold text-gray-700 mb-1">全局变量 (Suite Variables)</label>
-                        <div className="space-y-2">
-                          {globalVars.map((v, i) => (
-                            <div key={i} className="flex items-center gap-2">
-                              <input type="text" value={v.name} onChange={(e) => { const newVars = [...globalVars]; newVars[i].name = e.target.value; setGlobalVars(newVars); }} placeholder="${VAR_NAME}" className="w-1/3 px-2 py-1 text-xs font-mono border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" />
-                              <span className="text-gray-400">=</span>
-                              <input type="text" value={v.value} onChange={(e) => { const newVars = [...globalVars]; newVars[i].value = e.target.value; setGlobalVars(newVars); }} placeholder="Value" className="flex-1 px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" />
-                              <button onClick={() => setGlobalVars(globalVars.filter((_, idx) => idx !== i))} className="p-1 text-gray-400 hover:text-red-500"><X size={14} /></button>
-                            </div>
-                          ))}
-                          <button onClick={() => setGlobalVars([...globalVars, { name: '', value: '' }])} className="flex items-center gap-1 text-xs text-[#F27D26] font-medium hover:underline mt-2"><Plus size={12} /> 添加变量</button>
+                      <div className="pb-4 border-b border-gray-100 space-y-4">
+                        <div>
+                          <label className="block text-xs font-bold text-gray-700 mb-1">*** Settings *** (全局配置)</label>
+                          <textarea 
+                            value={settingsSection} 
+                            onChange={(e) => setSettingsSection(e.target.value)} 
+                            className="w-full px-2 py-1.5 text-xs font-mono border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" 
+                            rows={3}
+                            placeholder="Resource    PreDefinedKey.robot"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-gray-700 mb-1">全局变量 (Suite Variables)</label>
+                          <div className="space-y-2">
+                            {globalVars.map((v, i) => (
+                              <div key={i} className="flex items-center gap-2">
+                                <input type="text" value={v.name} onChange={(e) => { const newVars = [...globalVars]; newVars[i].name = e.target.value; setGlobalVars(newVars); }} placeholder="${VAR_NAME}" className="w-1/3 px-2 py-1 text-xs font-mono border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" />
+                                <span className="text-gray-400">=</span>
+                                <input type="text" value={v.value} onChange={(e) => { const newVars = [...globalVars]; newVars[i].value = e.target.value; setGlobalVars(newVars); }} placeholder="Value" className="flex-1 px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" />
+                                <button onClick={() => setGlobalVars(globalVars.filter((_, idx) => idx !== i))} className="p-1 text-gray-400 hover:text-red-500"><X size={14} /></button>
+                              </div>
+                            ))}
+                            <button onClick={() => setGlobalVars([...globalVars, { name: '', value: '' }])} className="flex items-center gap-1 text-xs text-[#F27D26] font-medium hover:underline mt-2"><Plus size={12} /> 添加变量</button>
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-gray-700 mb-1">*** Keywords *** (自定义关键字)</label>
+                          <textarea 
+                            value={customKeywordsSection} 
+                            onChange={(e) => setCustomKeywordsSection(e.target.value)} 
+                            className="w-full px-2 py-1.5 text-xs font-mono border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" 
+                            rows={3}
+                            placeholder="自定义关键字定义..."
+                          />
                         </div>
                       </div>
 
