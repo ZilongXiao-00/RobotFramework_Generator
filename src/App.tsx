@@ -13,13 +13,13 @@ const INITIAL_KEYWORD_LIBRARY = [
   { category: 'Control Flow', name: 'FOR', args: ['variable', 'IN', 'values'], desc: 'FOR loop', isContainer: true },
   { category: 'Control Flow', name: 'WHILE', args: ['condition'], desc: 'WHILE loop', isContainer: true },
   { category: 'Control Flow', name: 'Exit For Loop', args: [], desc: 'Stops executing the enclosing FOR loop.' },
-//   { category: 'Control Flow', name: 'Run Keyword If', args: ['condition', 'keyword'], desc: 'Runs the given keyword with the given arguments, if condition is true.' },
+  // { category: 'Control Flow', name: 'Run Keyword If', args: ['condition', 'keyword'], desc: 'Runs the given keyword with the given arguments, if condition is true.' },
   { category: 'Variables', name: 'Set Variable', args: ['value'], desc: 'Returns the given value (used for local assignment).' },
   { category: 'Variables', name: 'Set Suite Variable', args: ['name', 'value'], desc: 'Makes a variable available everywhere within the scope of the current suite.' },
   { category: 'Variables', name: 'Set Global Variable', args: ['name', 'value'], desc: 'Makes a variable available globally in all tests and suites.' },
   { category: 'BuiltIn', name: 'Log', args: ['message', 'level'], desc: 'Logs the given message.' },
   { category: 'BuiltIn', name: 'Sleep', args: ['time'], desc: 'Pauses the test.' },
-//   { category: 'BuiltIn', name: 'Should Be Equal As Strings', args: ['first', 'second'], desc: 'Fails if objects are unequal after converting them to strings.' },
+  // { category: 'BuiltIn', name: 'Should Be Equal As Strings', args: ['first', 'second'], desc: 'Fails if objects are unequal after converting them to strings.' },
   { category: 'BuiltIn', name: 'Evaluate', args: ['expression'], desc: 'Evaluates the given expression in Python and returns the result.' },
   { category: 'BuiltIn', name: 'Comment', args: ['text'], desc: 'Adds a comment.', isComment: true },
 //   { category: 'Custom Library', name: 'SERControl_DriverNoOccpuant', args: [], desc: 'Driver No Occpuant' },
@@ -32,13 +32,12 @@ const INITIAL_KEYWORD_LIBRARY = [
 //   { category: 'Custom Library', name: '初始化连接', args: ['车内/外机械臂'], desc: '车内/外机械臂' },
 //   { category: 'Custom Library', name: 'HMI_ShortPress_Button', args: ['button'], desc: 'HMIName Recovery time State' },
   { category: 'Custom Library', name: 'sshCommond', args: ['channel', 'command','arg'], desc: 'Execute SSH command' },
-//   { category: 'Custom Library', name: 'Should Be Equal As Strings', args: ['arg','rec_status'], desc: 'Execute SSH command' },
+  // { category: 'Custom Library', name: 'Should Be Equal As Strings', args: ['arg','rec_status'], desc: 'Execute SSH command' },
   { category: 'Custom', name: '空白模板 (Custom Code)', args: [], isCustomCode: true, desc: '手写代码' },
 ];
 
 export default function App() {
   const [library, setLibrary] = useState(INITIAL_KEYWORD_LIBRARY);
-  const [steps, setSteps] = useState([]);
   const [selectedStepId, setSelectedStepId] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [showCode, setShowCode] = useState(false);
@@ -52,10 +51,35 @@ export default function App() {
   const [dropTarget, setDropTarget] = useState(null); // { id, position: 'before' | 'after' | 'inside' }
 
   // Test Case Settings
-  const [testCaseName, setTestCaseName] = useState('测试用例名称');
-  const [teardown, setTeardown] = useState('sshClose     ${SUITE START TIME}    ${SUITE_NAME}    ${TEST_NAME}');
+  const [testCases, setTestCases] = useState([
+    {
+      id: 'tc_1',
+      name: '测试用例名称',
+      teardown: 'sshClose     ${SUITE START TIME}    ${SUITE_NAME}    ${TEST_NAME}',
+      tags: '',
+      steps: []
+    }
+  ]);
+  const [activeTestCaseId, setActiveTestCaseId] = useState('tc_1');
   const [globalVars, setGlobalVars] = useState([{ name: '${channel}', value: '1' }]);
   const [showSettings, setShowSettings] = useState(false);
+
+  const activeTestCase = testCases.find(tc => tc.id === activeTestCaseId) || testCases[0];
+  const steps = activeTestCase.steps;
+
+  const setSteps = (updater) => {
+    setTestCases(prev => prev.map(tc => {
+      if (tc.id === activeTestCaseId) {
+        const newSteps = typeof updater === 'function' ? updater(tc.steps) : updater;
+        return { ...tc, steps: newSteps };
+      }
+      return tc;
+    }));
+  };
+
+  const updateActiveTestCase = (updates) => {
+    setTestCases(prev => prev.map(tc => tc.id === activeTestCaseId ? { ...tc, ...updates } : tc));
+  };
 
   // --- Import Keywords ---
   const handleImportKeywords = (e) => {
@@ -359,12 +383,19 @@ export default function App() {
     }
 
     code += '*** Test Cases ***\n';
-    code += `${testCaseName || 'Demo Visual Test Case'}\n`;
-    code += generateStepCode(steps, 1);
     
-    if (teardown) {
-      code += `    [Teardown]    ${teardown}\n`;
-    }
+    testCases.forEach(tc => {
+      code += `${tc.name || 'Demo Visual Test Case'}\n`;
+      if (tc.tags) {
+        code += `    [Tags]    ${tc.tags}\n`;
+      }
+      code += generateStepCode(tc.steps, 1);
+      
+      if (tc.teardown) {
+        code += `    [Teardown]    ${tc.teardown}\n`;
+      }
+      code += '\n';
+    });
     
     return code;
   };
@@ -376,7 +407,7 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${testCaseName || 'test_case'}.robot`;
+    a.download = `test_suite.robot`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -603,19 +634,60 @@ export default function App() {
           ) : (
             <div className="flex-1 p-6 overflow-y-auto" onDrop={handleCanvasDrop} onDragOver={handleDragOver}>
               <div className="max-w-3xl mx-auto min-h-full pb-32">
+                {/* Test Case Tabs */}
+                <div className="flex items-end gap-1 mb-4 border-b border-gray-300 overflow-x-auto pt-2 px-2">
+                  {testCases.map(tc => (
+                    <div 
+                      key={tc.id}
+                      onClick={() => setActiveTestCaseId(tc.id)}
+                      className={`group flex items-center gap-2 px-4 py-2 rounded-t-lg border-t border-l border-r cursor-pointer whitespace-nowrap transition-colors ${activeTestCaseId === tc.id ? 'bg-white border-gray-300 text-[#F27D26] font-bold relative top-[1px]' : 'bg-gray-100 border-transparent text-gray-600 hover:bg-gray-200'}`}
+                    >
+                      {tc.name || '未命名用例'}
+                      {testCases.length > 1 && (
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const newTestCases = testCases.filter(t => t.id !== tc.id);
+                            setTestCases(newTestCases);
+                            if (activeTestCaseId === tc.id) {
+                              setActiveTestCaseId(newTestCases[0].id);
+                            }
+                          }}
+                          className={`ml-1 ${activeTestCaseId === tc.id ? 'text-gray-400 hover:text-red-500' : 'text-gray-400 opacity-0 group-hover:opacity-100 hover:text-red-500'}`}
+                        >
+                          <X size={14} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  <button 
+                    onClick={() => {
+                      const newId = `tc_${Date.now()}`;
+                      setTestCases([...testCases, {
+                        id: newId,
+                        name: `新测试用例 ${testCases.length + 1}`,
+                        teardown: '',
+                        tags: '',
+                        steps: []
+                      }]);
+                      setActiveTestCaseId(newId);
+                    }}
+                    className="flex items-center gap-1 px-3 py-2 rounded-t-lg text-gray-500 hover:text-[#F27D26] hover:bg-gray-100 cursor-pointer whitespace-nowrap transition-colors mb-[1px]"
+                  >
+                    <Plus size={14} /> 添加用例
+                  </button>
+                </div>
+
                 {/* Test Case Settings */}
                 <div className="mb-6 bg-white border border-gray-300 rounded-lg shadow-sm overflow-hidden">
                   <div className="px-4 py-2 bg-gray-100 border-b border-gray-200 flex items-center justify-between cursor-pointer hover:bg-gray-200 transition-colors" onClick={() => setShowSettings(!showSettings)}>
-                    <div className="flex items-center gap-2 text-sm font-bold text-gray-700"><Settings size={16} /> 测试用例设置 (Test Case Settings)</div>
+                    <div className="flex items-center gap-2 text-sm font-bold text-gray-700"><Settings size={16} /> 设置 (Suite & Test Case Settings)</div>
                     {showSettings ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                   </div>
                   {showSettings && (
                     <div className="p-4 space-y-4">
-                      <div>
-                        <label className="block text-xs font-bold text-gray-700 mb-1">用例名称 (Test Case Name)</label>
-                        <input type="text" value={testCaseName} onChange={(e) => setTestCaseName(e.target.value)} className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" />
-                      </div>
-                      <div>
+                      {/* Suite Settings */}
+                      <div className="pb-4 border-b border-gray-100">
                         <label className="block text-xs font-bold text-gray-700 mb-1">全局变量 (Suite Variables)</label>
                         <div className="space-y-2">
                           {globalVars.map((v, i) => (
@@ -629,9 +701,24 @@ export default function App() {
                           <button onClick={() => setGlobalVars([...globalVars, { name: '', value: '' }])} className="flex items-center gap-1 text-xs text-[#F27D26] font-medium hover:underline mt-2"><Plus size={12} /> 添加变量</button>
                         </div>
                       </div>
+
+                      {/* Active Test Case Settings */}
                       <div>
-                        <label className="block text-xs font-bold text-gray-700 mb-1">清理步骤 (Teardown)</label>
-                        <input type="text" value={teardown} onChange={(e) => setTeardown(e.target.value)} className="w-full px-2 py-1.5 text-xs font-mono border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" placeholder="例如: sshClose     ${SUITE START TIME}" />
+                        <h3 className="text-xs font-bold text-[#F27D26] mb-3 uppercase tracking-wider">当前用例设置 (Active Test Case)</h3>
+                        <div className="space-y-3">
+                          <div>
+                            <label className="block text-xs font-bold text-gray-700 mb-1">用例名称 (Test Case Name)</label>
+                            <input type="text" value={activeTestCase.name} onChange={(e) => updateActiveTestCase({ name: e.target.value })} className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-gray-700 mb-1">标签 (Tags)</label>
+                            <input type="text" value={activeTestCase.tags || ''} onChange={(e) => updateActiveTestCase({ tags: e.target.value })} className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" placeholder="例如: Done, Smoke" />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-gray-700 mb-1">清理步骤 (Teardown)</label>
+                            <input type="text" value={activeTestCase.teardown || ''} onChange={(e) => updateActiveTestCase({ teardown: e.target.value })} className="w-full px-2 py-1.5 text-xs font-mono border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" placeholder="例如: sshClose     ${SUITE START TIME}" />
+                          </div>
+                        </div>
                       </div>
                     </div>
                   )}
