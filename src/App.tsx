@@ -21,7 +21,8 @@ const INITIAL_KEYWORD_LIBRARY = [
   { category: 'BuiltIn', name: 'Sleep', args: ['time'], desc: 'Pauses the test.' },
   // { category: 'BuiltIn', name: 'Should Be Equal As Strings', args: ['first', 'second'], desc: 'Fails if objects are unequal after converting them to strings.' },
   { category: 'BuiltIn', name: 'Evaluate', args: ['expression'], desc: 'Evaluates the given expression in Python and returns the result.' },
-  { category: 'BuiltIn', name: 'Comment', args: ['text'], desc: 'Adds a comment.', isComment: true },
+  { category: 'BuiltIn', name: 'Comment', args: ['text'], desc: 'Adds a comment (BuiltIn keyword).' },
+  { category: 'BuiltIn', name: '#', args: ['text'], desc: 'Adds a hash comment.', isComment: true },
 //   { category: 'Custom Library', name: 'SERControl_DriverNoOccpuant', args: [], desc: 'Driver No Occpuant' },
 //   { category: 'Custom Library', name: 'SERControl_DriverOccpuant', args: [], desc: 'Driver Occpuant' },
 //   { category: 'Custom Library', name: 'NioApp_Lock_Vehicle_With_Retry', args: [], desc: 'Lock Vehicle' },
@@ -323,7 +324,7 @@ export default function App() {
               } else if (trimmed.startsWith('#')) {
                 const step = {
                   id: `step_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-                  keyword: 'Comment',
+                  keyword: '#',
                   isComment: true,
                   args: { text: trimmed.substring(1).trim() }
                 };
