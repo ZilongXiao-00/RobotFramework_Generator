@@ -908,7 +908,14 @@ export default function App() {
                 <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2 px-1">{cat}</div>
                 <div className="space-y-1">
                   {filteredLibrary.filter(kw => kw.category === cat).map(kw => (
-                    <div key={kw.name} draggable onDragStart={(e) => handleDragStart(e, kw)} className={`px-3 py-2 text-xs border rounded cursor-grab active:cursor-grabbing hover:shadow-sm transition-all ${kw.isContainer ? 'bg-blue-50 border-blue-200 text-blue-800 border-l-4 border-l-blue-500' : kw.isComment ? 'bg-green-50 border-green-200 text-green-800' : kw.isCustomCode ? 'bg-purple-50 border-purple-200 text-purple-800' : 'bg-gray-50 border-gray-200 hover:border-gray-300'}`} title={kw.desc}>
+                    <div 
+                      key={kw.name} 
+                      draggable 
+                      onDragStart={(e) => handleDragStart(e, kw)} 
+                      onDoubleClick={() => insertNewStep(kw, null, 'append')}
+                      className={`px-3 py-2 text-xs border rounded cursor-grab active:cursor-grabbing hover:shadow-sm transition-all ${kw.isContainer ? 'bg-blue-50 border-blue-200 text-blue-800 border-l-4 border-l-blue-500' : kw.isComment ? 'bg-green-50 border-green-200 text-green-800' : kw.isCustomCode ? 'bg-purple-50 border-purple-200 text-purple-800' : 'bg-gray-50 border-gray-200 hover:border-gray-300'}`} 
+                      title={`${kw.desc}\n(双击直接添加到最下方)`}
+                    >
                       <div className="font-medium flex items-center gap-1">
                         {kw.isContainer && <CornerDownRight size={12} />}
                         {kw.isComment && <Hash size={12} />}
@@ -923,12 +930,12 @@ export default function App() {
         </div>
 
         {/* Middle: Canvas */}
-        <div className="flex-1 flex flex-col relative bg-[#f5f5f5]">
+        <div className="flex-1 flex flex-col relative bg-[#f5f5f5] min-w-0">
           {showCode ? (
-            <div className="flex-1 p-4 overflow-auto">
-              <div className="bg-[#1e1e1e] text-[#d4d4d4] p-4 rounded-lg shadow-inner font-mono text-sm whitespace-pre h-full overflow-auto">
-                {generateCode()}
-              </div>
+            <div className="flex-1 p-4 overflow-hidden flex flex-col">
+              <pre className="bg-[#1e1e1e] text-[#d4d4d4] p-4 rounded-lg shadow-inner font-mono text-sm whitespace-pre overflow-auto flex-1">
+                <code>{generateCode()}</code>
+              </pre>
             </div>
           ) : (
             <div className="flex-1 p-6 overflow-y-auto" onDrop={handleCanvasDrop} onDragOver={handleDragOver}>
