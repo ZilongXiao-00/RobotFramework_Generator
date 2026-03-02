@@ -45,6 +45,7 @@ export default function App() {
   const [isRunning, setIsRunning] = useState(false);
   
   const fileInputRef = useRef(null);
+  const robotInputRef = useRef(null);
 
   // Drag and drop state
   const [draggedStepId, setDraggedStepId] = useState(null);
@@ -122,6 +123,216 @@ export default function App() {
         setLogs(prev => [...prev, `[ERROR] 解析 JSON 文件失败: ${err.message}`]);
       }
       // Reset input so the same file can be uploaded again if needed
+      e.target.value = '';
+    };
+    reader.readAsText(file);
+  };
+
+  // --- Import Robot File ---
+  const handleImportRobot = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const content = event.target.result;
+        const rawLines = content.split('\n');
+        
+        // Handle line continuations (...)
+        const lines = [];
+        for (let line of rawLines) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith('...')) {
+            if (lines.length > 0) {
+              lines[lines.length - 1] += '    ' + trimmed.substring(3).trim();
+            }
+          } else {
+            lines.push(line.replace(/\r$/, ''));
+          }
+        }
+
+        let currentSection = null;
+        let parsedGlobalVars = [];
+        let parsedTestCases = [];
+        let currentTestCase = null;
+        let blockStack = [];
+
+        const finalizeTestCase = () => {
+          if (currentTestCase) {
+            parsedTestCases.push(currentTestCase);
+            currentTestCase = null;
+            blockStack = [];
+          }
+        };
+
+        const parseStepLine = (lineStr) => {
+          const parts = lineStr.trim().split(/\s{2,}|\t+/);
+          if (parts.length === 0) return null;
+
+          let outputVars = [];
+          let modifier = '';
+          let keyword = '';
+          let args = [];
+          let currentIndex = 0;
+
+          // 1. Extract Output Variables
+          while (currentIndex < parts.length && (parts[currentIndex].startsWith('${') || parts[currentIndex].startsWith('@{') || parts[currentIndex].startsWith('&{'))) {
+            let varName = parts[currentIndex];
+            if (varName.endsWith('=')) {
+              varName = varName.slice(0, -1).trim();
+            }
+            outputVars.push(varName);
+            currentIndex++;
+            if (currentIndex < parts.length && parts[currentIndex] === '=') {
+              currentIndex++;
+            }
+          }
+
+          // 2. Extract Modifier
+          const actualModifiers = ['Run Keyword And Continue On Failure', 'Run Keyword And Ignore Error', 'Wait Until Keyword Succeeds'];
+          if (currentIndex < parts.length && actualModifiers.includes(parts[currentIndex])) {
+            modifier = parts[currentIndex];
+            currentIndex++;
+          }
+
+          // 3. Extract Keyword
+          if (currentIndex < parts.length) {
+            keyword = parts[currentIndex];
+            currentIndex++;
+          }
+
+          if (!keyword) return null;
+
+          // 4. Extract Args
+          while (currentIndex < parts.length) {
+            args.push(parts[currentIndex]);
+            currentIndex++;
+          }
+
+          const libKw = library.find(k => k.name.toLowerCase() === keyword.toLowerCase());
+          const isContainer = libKw ? libKw.isContainer : ['IF', 'FOR', 'WHILE', 'ELSE IF', 'ELSE'].includes(keyword.toUpperCase());
+
+          let namedArgs = {};
+          let extraArgs = [];
+          if (libKw && libKw.args) {
+            libKw.args.forEach((argName, idx) => {
+              if (idx < args.length) {
+                namedArgs[argName] = args[idx];
+              } else {
+                namedArgs[argName] = '';
+              }
+            });
+            if (args.length > libKw.args.length) {
+              extraArgs = args.slice(libKw.args.length);
+            }
+          } else {
+            args.forEach((arg) => {
+              extraArgs.push(arg);
+            });
+          }
+
+          return {
+            id: `step_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            keyword: keyword,
+            isCustomCode: false,
+            isContainer: isContainer,
+            isComment: false,
+            args: namedArgs,
+            extraArgs: extraArgs,
+            modifier: modifier,
+            outputVars: outputVars,
+            children: isContainer ? [] : undefined
+          };
+        };
+
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          const trimmed = line.trim();
+
+          if (!trimmed) continue;
+
+          if (trimmed.startsWith('***')) {
+            const sectionName = trimmed.replace(/\*/g, '').trim().toLowerCase();
+            if (sectionName.includes('settings')) currentSection = 'settings';
+            else if (sectionName.includes('variables')) currentSection = 'variables';
+            else if (sectionName.includes('test cases')) {
+              currentSection = 'testcases';
+              finalizeTestCase();
+            }
+            continue;
+          }
+
+          if (currentSection === 'variables') {
+            const parts = trimmed.split(/\s{2,}|\t+/);
+            if (parts.length >= 2) {
+              parsedGlobalVars.push({ name: parts[0], value: parts[1] });
+            }
+          } else if (currentSection === 'testcases') {
+            if (!line.startsWith(' ') && !line.startsWith('\t')) {
+              finalizeTestCase();
+              currentTestCase = {
+                id: `tc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                name: trimmed,
+                teardown: '',
+                tags: '',
+                steps: []
+              };
+              blockStack = [];
+            } else if (currentTestCase) {
+              if (trimmed.startsWith('[Tags]')) {
+                currentTestCase.tags = trimmed.replace('[Tags]', '').trim();
+              } else if (trimmed.startsWith('[Teardown]')) {
+                currentTestCase.teardown = trimmed.replace('[Teardown]', '').trim();
+              } else if (trimmed.startsWith('#')) {
+                const step = {
+                  id: `step_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                  keyword: 'Comment',
+                  isComment: true,
+                  args: { text: trimmed.substring(1).trim() }
+                };
+                if (blockStack.length > 0) {
+                  blockStack[blockStack.length - 1].children.push(step);
+                } else {
+                  currentTestCase.steps.push(step);
+                }
+              } else if (trimmed.toUpperCase() === 'END') {
+                blockStack.pop();
+              } else {
+                const step = parseStepLine(trimmed);
+                if (step) {
+                  if (['ELSE', 'ELSE IF'].includes(step.keyword.toUpperCase())) {
+                     blockStack.pop();
+                  }
+
+                  if (blockStack.length > 0) {
+                    blockStack[blockStack.length - 1].children.push(step);
+                  } else {
+                    currentTestCase.steps.push(step);
+                  }
+
+                  if (step.isContainer) {
+                    blockStack.push(step);
+                  }
+                }
+              }
+            }
+          }
+        }
+        finalizeTestCase();
+
+        if (parsedTestCases.length > 0) {
+          setTestCases(parsedTestCases);
+          setActiveTestCaseId(parsedTestCases[0].id);
+        }
+        if (parsedGlobalVars.length > 0) {
+          setGlobalVars(parsedGlobalVars);
+        }
+        setLogs(prev => [...prev, `[INFO] 成功导入并解析 Robot 文件: ${file.name}`]);
+      } catch (err) {
+        console.error(err);
+        setLogs(prev => [...prev, `[ERROR] 解析 Robot 文件失败: ${err.message}`]);
+      }
       e.target.value = '';
     };
     reader.readAsText(file);
@@ -569,12 +780,16 @@ export default function App() {
           <button onClick={() => setShowCode(!showCode)} className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium border border-gray-600 rounded hover:bg-gray-800 transition-colors">
             <Code size={14} /> {showCode ? '隐藏代码' : '查看生成的代码'}
           </button>
+          <button onClick={() => robotInputRef.current?.click()} className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium border border-gray-600 rounded hover:bg-gray-800 transition-colors">
+            <Upload size={14} /> 导入 .robot 文件
+          </button>
           <button onClick={handleDownload} className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium border border-gray-600 rounded hover:bg-gray-800 transition-colors">
             <Download size={14} /> 保存 .robot 文件
           </button>
           <button onClick={runSimulation} disabled={isRunning || steps.length === 0} className="flex items-center gap-2 px-4 py-1.5 text-xs font-bold bg-[#F27D26] text-white rounded hover:bg-[#d96b1f] disabled:opacity-50 transition-colors">
             <Play size={14} fill="currentColor" /> 运行测试
           </button>
+          <input type="file" accept=".robot" ref={robotInputRef} style={{ display: 'none' }} onChange={handleImportRobot} />
         </div>
       </header>
 
