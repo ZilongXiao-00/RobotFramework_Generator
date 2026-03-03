@@ -65,6 +65,9 @@ export default function App() {
     }
   ]);
   const [activeTestCaseId, setActiveTestCaseId] = useState('tc_1');
+  const [userKeywords, setUserKeywords] = useState([]);
+  const [activeUserKeywordId, setActiveUserKeywordId] = useState(null);
+  const [activeTab, setActiveTab] = useState('testcases'); // 'testcases' or 'keywords'
   const [globalVars, setGlobalVars] = useState([]);
   const [settingsSection, setSettingsSection] = useState("Resource          PreDefinedKey.robot\nResource          Setting.resource");
   const [customKeywordsSection, setCustomKeywordsSection] = useState("");
@@ -76,20 +79,37 @@ export default function App() {
   }, [library]);
 
   const activeTestCase = testCases.find(tc => tc.id === activeTestCaseId) || testCases[0];
-  const steps = activeTestCase.steps;
+  const activeUserKeyword = userKeywords.find(kw => kw.id === activeUserKeywordId);
+  
+  const currentEntity = activeTab === 'testcases' ? activeTestCase : activeUserKeyword;
+  const steps = currentEntity ? currentEntity.steps : [];
 
   const setSteps = (updater) => {
-    setTestCases(prev => prev.map(tc => {
-      if (tc.id === activeTestCaseId) {
-        const newSteps = typeof updater === 'function' ? updater(tc.steps) : updater;
-        return { ...tc, steps: newSteps };
-      }
-      return tc;
-    }));
+    if (activeTab === 'testcases') {
+      setTestCases(prev => prev.map(tc => {
+        if (tc.id === activeTestCaseId) {
+          const newSteps = typeof updater === 'function' ? updater(tc.steps) : updater;
+          return { ...tc, steps: newSteps };
+        }
+        return tc;
+      }));
+    } else if (activeTab === 'keywords' && activeUserKeywordId) {
+      setUserKeywords(prev => prev.map(kw => {
+        if (kw.id === activeUserKeywordId) {
+          const newSteps = typeof updater === 'function' ? updater(kw.steps) : updater;
+          return { ...kw, steps: newSteps };
+        }
+        return kw;
+      }));
+    }
   };
 
   const updateActiveTestCase = (updates) => {
     setTestCases(prev => prev.map(tc => tc.id === activeTestCaseId ? { ...tc, ...updates } : tc));
+  };
+
+  const updateActiveUserKeyword = (updates) => {
+    setUserKeywords(prev => prev.map(kw => kw.id === activeUserKeywordId ? { ...kw, ...updates } : kw));
   };
 
   // --- Import Keywords ---
@@ -100,7 +120,7 @@ export default function App() {
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
-        const json = JSON.parse(event.target.result);
+        const json = JSON.parse(event.target.result as string);
         const newKeywords = [];
         
         Object.keys(json).forEach(fileName => {
@@ -160,7 +180,7 @@ export default function App() {
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
-        const content = event.target.result;
+        const content = event.target.result as string;
         const rawLines = content.split('\n');
         
         // Handle line continuations (...)
@@ -487,6 +507,29 @@ export default function App() {
     setSelectedStepId(newStep.id);
   };
 
+  const addUserKeyword = () => {
+    const newId = `kw_${Date.now()}`;
+    const newKw = {
+      id: newId,
+      name: '新关键字',
+      desc: '关键字描述',
+      args: [],
+      returnVars: [],
+      steps: []
+    };
+    setUserKeywords(prev => [...prev, newKw]);
+    setActiveUserKeywordId(newId);
+    setActiveTab('keywords');
+  };
+
+  const removeUserKeyword = (id) => {
+    setUserKeywords(prev => prev.filter(kw => kw.id !== id));
+    if (activeUserKeywordId === id) {
+      setActiveUserKeywordId(null);
+      setActiveTab('testcases');
+    }
+  };
+
   // --- Drag and Drop ---
   const handleDragStart = (e, keyword) => {
     e.dataTransfer.setData('application/json', JSON.stringify(keyword));
@@ -663,8 +706,34 @@ export default function App() {
       code += '\n';
     });
     
-    if (customKeywordsSection.trim()) {
+    if (userKeywords.length > 0) {
       code += '*** Keywords ***\n';
+      userKeywords.forEach(kw => {
+        code += `${kw.name || 'Unnamed Keyword'}\n`;
+        if (kw.desc) {
+          code += `    [Documentation]    ${kw.desc}\n`;
+        }
+        if (kw.args && kw.args.length > 0) {
+          const validArgs = kw.args.filter(a => a.trim() !== '');
+          if (validArgs.length > 0) {
+            code += `    [Arguments]    ${validArgs.map(a => (a.startsWith('${') ? a : `\${${a}}`)).join('    ')}\n`;
+          }
+        }
+        
+        code += generateStepCode(kw.steps, 1);
+        
+        if (kw.returnVars && kw.returnVars.length > 0) {
+          const validReturns = kw.returnVars.filter(r => r.trim() !== '');
+          if (validReturns.length > 0) {
+            code += `    [Return]    ${validReturns.map(r => (r.startsWith('${') ? r : `\${${r}}`)).join('    ')}\n`;
+          }
+        }
+        code += '\n';
+      });
+    }
+
+    if (customKeywordsSection.trim()) {
+      if (userKeywords.length === 0) code += '*** Keywords ***\n';
       code += customKeywordsSection + '\n';
     }
     
@@ -822,7 +891,19 @@ export default function App() {
     });
   };
 
-  const filteredLibrary = library.filter(kw => kw.name.toLowerCase().includes(searchQuery.toLowerCase()));
+  const combinedLibrary = [
+    ...library,
+    ...userKeywords.map(kw => ({
+      category: '用户自定义 (User Keywords)',
+      name: kw.name,
+      args: kw.args,
+      desc: kw.desc,
+      isContainer: false,
+      isUserKeyword: true
+    }))
+  ];
+
+  const filteredLibrary = combinedLibrary.filter(kw => kw.name.toLowerCase().includes(searchQuery.toLowerCase()));
   const categories = [...new Set(filteredLibrary.map(kw => kw.category))];
 
   return (
@@ -940,129 +1021,306 @@ export default function App() {
           ) : (
             <div className="flex-1 p-6 overflow-y-auto" onDrop={handleCanvasDrop} onDragOver={handleDragOver}>
               <div className="max-w-3xl mx-auto min-h-full pb-32">
-                {/* Test Case Tabs */}
-                <div className="flex items-end gap-1 mb-4 border-b border-gray-300 overflow-x-auto pt-2 px-2">
-                  {testCases.map(tc => (
-                    <div 
-                      key={tc.id}
-                      onClick={() => setActiveTestCaseId(tc.id)}
-                      className={`group flex items-center gap-2 px-4 py-2 rounded-t-lg border-t border-l border-r cursor-pointer whitespace-nowrap transition-colors ${activeTestCaseId === tc.id ? 'bg-white border-gray-300 text-[#F27D26] font-bold relative top-[1px]' : 'bg-gray-100 border-transparent text-gray-600 hover:bg-gray-200'}`}
-                    >
-                      <span className="max-w-[200px] truncate" title={tc.name || '未命名用例'}>
-                        {tc.name || '未命名用例'}
-                      </span>
-                      {testCases.length > 1 && (
-                        <button 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            const newTestCases = testCases.filter(t => t.id !== tc.id);
-                            setTestCases(newTestCases);
-                            if (activeTestCaseId === tc.id) {
-                              setActiveTestCaseId(newTestCases[0].id);
-                            }
-                          }}
-                          className={`ml-1 ${activeTestCaseId === tc.id ? 'text-gray-400 hover:text-red-500' : 'text-gray-400 opacity-0 group-hover:opacity-100 hover:text-red-500'}`}
-                        >
-                          <X size={14} />
-                        </button>
-                      )}
-                    </div>
-                  ))}
+                {/* Tabs for Test Cases vs Keywords */}
+                <div className="flex border-b border-gray-300 mb-6">
+                  <button 
+                    onClick={() => setActiveTab('testcases')}
+                    className={`px-6 py-3 text-sm font-bold transition-colors border-b-2 ${activeTab === 'testcases' ? 'border-[#F27D26] text-[#F27D26]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+                  >
+                    测试用例 (Test Cases)
+                  </button>
                   <button 
                     onClick={() => {
-                      const newId = `tc_${Date.now()}`;
-                      setTestCases([...testCases, {
-                        id: newId,
-                        name: `新测试用例 ${testCases.length + 1}`,
-                        teardown: '',
-                        tags: '',
-                        steps: []
-                      }]);
-                      setActiveTestCaseId(newId);
+                      setActiveTab('keywords');
+                      if (userKeywords.length > 0 && !activeUserKeywordId) {
+                        setActiveUserKeywordId(userKeywords[0].id);
+                      }
                     }}
-                    className="flex items-center gap-1 px-3 py-2 rounded-t-lg text-gray-500 hover:text-[#F27D26] hover:bg-gray-100 cursor-pointer whitespace-nowrap transition-colors mb-[1px]"
+                    className={`px-6 py-3 text-sm font-bold transition-colors border-b-2 ${activeTab === 'keywords' ? 'border-[#F27D26] text-[#F27D26]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
                   >
-                    <Plus size={14} /> 添加用例
+                    自定义关键字 (Keywords)
                   </button>
                 </div>
 
-                {/* Test Case Settings */}
-                <div className="mb-6 bg-white border border-gray-300 rounded-lg shadow-sm overflow-hidden">
-                  <div className="px-4 py-2 bg-gray-100 border-b border-gray-200 flex items-center justify-between cursor-pointer hover:bg-gray-200 transition-colors" onClick={() => setShowSettings(!showSettings)}>
-                    <div className="flex items-center gap-2 text-sm font-bold text-gray-700"><Settings size={16} /> 设置 (Suite & Test Case Settings)</div>
-                    {showSettings ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                  </div>
-                  {showSettings && (
-                    <div className="p-4 space-y-4">
-                      {/* Suite Settings */}
-                      <div className="pb-4 border-b border-gray-100 space-y-4">
-                        <div>
-                          <label className="block text-xs font-bold text-gray-700 mb-1">*** Settings *** (全局配置)</label>
-                          <textarea 
-                            value={settingsSection} 
-                            onChange={(e) => setSettingsSection(e.target.value)} 
-                            className="w-full px-2 py-1.5 text-xs font-mono border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" 
-                            rows={3}
-                            placeholder="Resource    PreDefinedKey.robot"
-                          />
+                {activeTab === 'testcases' ? (
+                  <>
+                    {/* Test Case Tabs */}
+                    <div className="flex items-end gap-1 mb-4 border-b border-gray-300 overflow-x-auto pt-2 px-2">
+                      {testCases.map(tc => (
+                        <div 
+                          key={tc.id}
+                          onClick={() => setActiveTestCaseId(tc.id)}
+                          className={`group flex items-center gap-2 px-4 py-2 rounded-t-lg border-t border-l border-r cursor-pointer whitespace-nowrap transition-colors ${activeTestCaseId === tc.id ? 'bg-white border-gray-300 text-[#F27D26] font-bold relative top-[1px]' : 'bg-gray-100 border-transparent text-gray-600 hover:bg-gray-200'}`}
+                        >
+                          <span className="max-w-[200px] truncate" title={tc.name || '未命名用例'}>
+                            {tc.name || '未命名用例'}
+                          </span>
+                          {testCases.length > 1 && (
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const newTestCases = testCases.filter(t => t.id !== tc.id);
+                                setTestCases(newTestCases);
+                                if (activeTestCaseId === tc.id) {
+                                  setActiveTestCaseId(newTestCases[0].id);
+                                }
+                              }}
+                              className={`ml-1 ${activeTestCaseId === tc.id ? 'text-gray-400 hover:text-red-500' : 'text-gray-400 opacity-0 group-hover:opacity-100 hover:text-red-500'}`}
+                            >
+                              <X size={14} />
+                            </button>
+                          )}
                         </div>
-                        <div>
-                          <label className="block text-xs font-bold text-gray-700 mb-1">全局变量 (Suite Variables)</label>
-                          <div className="space-y-2">
-                            {globalVars.map((v, i) => (
-                              <div key={i} className="flex items-center gap-2">
-                                <input type="text" value={v.name} onChange={(e) => { const newVars = [...globalVars]; newVars[i].name = e.target.value; setGlobalVars(newVars); }} placeholder="${VAR_NAME}" className="w-1/3 px-2 py-1 text-xs font-mono border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" />
-                                <span className="text-gray-400">=</span>
-                                <input type="text" value={v.value} onChange={(e) => { const newVars = [...globalVars]; newVars[i].value = e.target.value; setGlobalVars(newVars); }} placeholder="Value" className="flex-1 px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" />
-                                <button onClick={() => setGlobalVars(globalVars.filter((_, idx) => idx !== i))} className="p-1 text-gray-400 hover:text-red-500"><X size={14} /></button>
-                              </div>
-                            ))}
-                            <button onClick={() => setGlobalVars([...globalVars, { name: '', value: '' }])} className="flex items-center gap-1 text-xs text-[#F27D26] font-medium hover:underline mt-2"><Plus size={12} /> 添加变量</button>
-                          </div>
-                        </div>
-                        <div>
-                          <label className="block text-xs font-bold text-gray-700 mb-1">*** Keywords *** (自定义关键字)</label>
-                          <textarea 
-                            value={customKeywordsSection} 
-                            onChange={(e) => setCustomKeywordsSection(e.target.value)} 
-                            className="w-full px-2 py-1.5 text-xs font-mono border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" 
-                            rows={3}
-                            placeholder="自定义关键字定义..."
-                          />
-                        </div>
-                      </div>
-
-                      {/* Active Test Case Settings */}
-                      <div>
-                        <h3 className="text-xs font-bold text-[#F27D26] mb-3 uppercase tracking-wider">当前用例设置 (Active Test Case)</h3>
-                        <div className="space-y-3">
-                          <div>
-                            <label className="block text-xs font-bold text-gray-700 mb-1">用例名称 (Test Case Name)</label>
-                            <input type="text" value={activeTestCase.name} onChange={(e) => updateActiveTestCase({ name: e.target.value })} className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" />
-                          </div>
-                          <div>
-                            <label className="block text-xs font-bold text-gray-700 mb-1">标签 (Tags)</label>
-                            <input type="text" value={activeTestCase.tags || ''} onChange={(e) => updateActiveTestCase({ tags: e.target.value })} className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" placeholder="例如: Done, Smoke" />
-                          </div>
-                          <div>
-                            <label className="block text-xs font-bold text-gray-700 mb-1">清理步骤 (Teardown)</label>
-                            <input type="text" value={activeTestCase.teardown || ''} onChange={(e) => updateActiveTestCase({ teardown: e.target.value })} className="w-full px-2 py-1.5 text-xs font-mono border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" placeholder="例如: sshClose     ${SUITE START TIME}" />
-                          </div>
-                        </div>
-                      </div>
+                      ))}
+                      <button 
+                        onClick={() => {
+                          const newId = `tc_${Date.now()}`;
+                          setTestCases([...testCases, {
+                            id: newId,
+                            name: `新测试用例 ${testCases.length + 1}`,
+                            teardown: '',
+                            tags: '',
+                            steps: []
+                          }]);
+                          setActiveTestCaseId(newId);
+                        }}
+                        className="flex items-center gap-1 px-3 py-2 rounded-t-lg text-gray-500 hover:text-[#F27D26] hover:bg-gray-100 cursor-pointer whitespace-nowrap transition-colors mb-[1px]"
+                      >
+                        <Plus size={14} /> 添加用例
+                      </button>
                     </div>
-                  )}
-                </div>
+
+                    {/* Test Case Settings */}
+                    <div className="mb-6 bg-white border border-gray-300 rounded-lg shadow-sm overflow-hidden">
+                      <div className="px-4 py-2 bg-gray-100 border-b border-gray-200 flex items-center justify-between cursor-pointer hover:bg-gray-200 transition-colors" onClick={() => setShowSettings(!showSettings)}>
+                        <div className="flex items-center gap-2 text-sm font-bold text-gray-700"><Settings size={16} /> 设置 (Suite & Test Case Settings)</div>
+                        {showSettings ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                      </div>
+                      {showSettings && (
+                        <div className="p-4 space-y-4">
+                          {/* Suite Settings */}
+                          <div className="pb-4 border-b border-gray-100 space-y-4">
+                            <div>
+                              <label className="block text-xs font-bold text-gray-700 mb-1">*** Settings *** (全局配置)</label>
+                              <textarea 
+                                value={settingsSection} 
+                                onChange={(e) => setSettingsSection(e.target.value)} 
+                                className="w-full px-2 py-1.5 text-xs font-mono border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" 
+                                rows={3}
+                                placeholder="Resource    PreDefinedKey.robot"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-bold text-gray-700 mb-1">全局变量 (Suite Variables)</label>
+                              <div className="space-y-2">
+                                {globalVars.map((v, i) => (
+                                  <div key={i} className="flex items-center gap-2">
+                                    <input type="text" value={v.name} onChange={(e) => { const newVars = [...globalVars]; newVars[i].name = e.target.value; setGlobalVars(newVars); }} placeholder="${VAR_NAME}" className="w-1/3 px-2 py-1 text-xs font-mono border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" />
+                                    <span className="text-gray-400">=</span>
+                                    <input type="text" value={v.value} onChange={(e) => { const newVars = [...globalVars]; newVars[i].value = e.target.value; setGlobalVars(newVars); }} placeholder="Value" className="flex-1 px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" />
+                                    <button onClick={() => setGlobalVars(globalVars.filter((_, idx) => idx !== i))} className="p-1 text-gray-400 hover:text-red-500"><X size={14} /></button>
+                                  </div>
+                                ))}
+                                <button onClick={() => setGlobalVars([...globalVars, { name: '', value: '' }])} className="flex items-center gap-1 text-xs text-[#F27D26] font-medium hover:underline mt-2"><Plus size={12} /> 添加变量</button>
+                              </div>
+                            </div>
+                            <div>
+                              <label className="block text-xs font-bold text-gray-700 mb-1">*** Keywords *** (自定义关键字)</label>
+                              <textarea 
+                                value={customKeywordsSection} 
+                                onChange={(e) => setCustomKeywordsSection(e.target.value)} 
+                                className="w-full px-2 py-1.5 text-xs font-mono border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" 
+                                rows={3}
+                                placeholder="自定义关键字定义..."
+                              />
+                            </div>
+                          </div>
+
+                          {/* Active Test Case Settings */}
+                          <div>
+                            <h3 className="text-xs font-bold text-[#F27D26] mb-3 uppercase tracking-wider">当前用例设置 (Active Test Case)</h3>
+                            <div className="space-y-3">
+                              <div>
+                                <label className="block text-xs font-bold text-gray-700 mb-1">用例名称 (Test Case Name)</label>
+                                <input type="text" value={activeTestCase.name} onChange={(e) => updateActiveTestCase({ name: e.target.value })} className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-bold text-gray-700 mb-1">标签 (Tags)</label>
+                                <input type="text" value={activeTestCase.tags || ''} onChange={(e) => updateActiveTestCase({ tags: e.target.value })} className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" placeholder="例如: Done, Smoke" />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-bold text-gray-700 mb-1">清理步骤 (Teardown)</label>
+                                <input type="text" value={activeTestCase.teardown || ''} onChange={(e) => updateActiveTestCase({ teardown: e.target.value })} className="w-full px-2 py-1.5 text-xs font-mono border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" placeholder="例如: sshClose     ${SUITE START TIME}" />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    {/* Keyword Tabs */}
+                    <div className="flex items-end gap-1 mb-4 border-b border-gray-300 overflow-x-auto pt-2 px-2">
+                      {userKeywords.map(kw => (
+                        <div 
+                          key={kw.id}
+                          onClick={() => setActiveUserKeywordId(kw.id)}
+                          className={`group flex items-center gap-2 px-4 py-2 rounded-t-lg border-t border-l border-r cursor-pointer whitespace-nowrap transition-colors ${activeUserKeywordId === kw.id ? 'bg-white border-gray-300 text-[#F27D26] font-bold relative top-[1px]' : 'bg-gray-100 border-transparent text-gray-600 hover:bg-gray-200'}`}
+                        >
+                          <span className="max-w-[200px] truncate" title={kw.name || '未命名关键字'}>
+                            {kw.name || '未命名关键字'}
+                          </span>
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              removeUserKeyword(kw.id);
+                            }}
+                            className="ml-1 text-gray-400 opacity-0 group-hover:opacity-100 hover:text-red-500"
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+                      ))}
+                      <button 
+                        onClick={addUserKeyword}
+                        className="flex items-center gap-1 px-3 py-2 rounded-t-lg text-gray-500 hover:text-[#F27D26] hover:bg-gray-100 cursor-pointer whitespace-nowrap transition-colors mb-[1px]"
+                      >
+                        <Plus size={14} /> 添加关键字
+                      </button>
+                    </div>
+
+                    {activeUserKeyword ? (
+                      <div className="bg-white rounded-xl border border-gray-200 shadow-sm mb-6 overflow-hidden">
+                        <div className="px-4 py-3 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
+                          <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider">关键字定义 (Keyword Definition)</h3>
+                        </div>
+                        <div className="p-4 space-y-4">
+                          <div>
+                            <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">关键字名称 (Name) <span className="text-red-500">*</span></label>
+                            <input 
+                              type="text" 
+                              value={activeUserKeyword.name} 
+                              onChange={(e) => updateActiveUserKeyword({ name: e.target.value })}
+                              className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#F27D26]/20 focus:border-[#F27D26] transition-all"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">介绍 (Documentation) <span className="text-red-500">*</span></label>
+                            <textarea 
+                              value={activeUserKeyword.desc} 
+                              onChange={(e) => updateActiveUserKeyword({ desc: e.target.value })}
+                              rows={2}
+                              className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#F27D26]/20 focus:border-[#F27D26] transition-all"
+                            />
+                          </div>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">输入参数 (Arguments) <span className="text-red-500">*</span></label>
+                              <div className="space-y-2">
+                                {activeUserKeyword.args.map((arg, idx) => (
+                                  <div key={idx} className="flex gap-2">
+                                    <input 
+                                      type="text" 
+                                      value={arg} 
+                                      onChange={(e) => {
+                                        const newArgs = [...activeUserKeyword.args];
+                                        newArgs[idx] = e.target.value;
+                                        updateActiveUserKeyword({ args: newArgs });
+                                      }}
+                                      className="flex-1 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded text-xs"
+                                      placeholder="${arg_name}"
+                                    />
+                                    <button 
+                                      onClick={() => {
+                                        const newArgs = activeUserKeyword.args.filter((_, i) => i !== idx);
+                                        updateActiveUserKeyword({ args: newArgs });
+                                      }}
+                                      className="p-1.5 text-red-500 hover:bg-red-50 rounded"
+                                    >
+                                      <Trash2 size={14} />
+                                    </button>
+                                  </div>
+                                ))}
+                                <button 
+                                  onClick={() => updateActiveUserKeyword({ args: [...activeUserKeyword.args, ''] })}
+                                  className="text-[10px] text-[#F27D26] font-bold uppercase hover:underline"
+                                >
+                                  + 添加参数
+                                </button>
+                              </div>
+                            </div>
+                            <div>
+                              <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">输出变量 (Return) <span className="text-red-500">*</span></label>
+                              <div className="space-y-2">
+                                {activeUserKeyword.returnVars.map((ret, idx) => (
+                                  <div key={idx} className="flex gap-2">
+                                    <input 
+                                      type="text" 
+                                      value={ret} 
+                                      onChange={(e) => {
+                                        const newReturns = [...activeUserKeyword.returnVars];
+                                        newReturns[idx] = e.target.value;
+                                        updateActiveUserKeyword({ returnVars: newReturns });
+                                      }}
+                                      className="flex-1 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded text-xs"
+                                      placeholder="${return_var}"
+                                    />
+                                    <button 
+                                      onClick={() => {
+                                        const newReturns = activeUserKeyword.returnVars.filter((_, i) => i !== idx);
+                                        updateActiveUserKeyword({ returnVars: newReturns });
+                                      }}
+                                      className="p-1.5 text-red-500 hover:bg-red-50 rounded"
+                                    >
+                                      <Trash2 size={14} />
+                                    </button>
+                                  </div>
+                                ))}
+                                <button 
+                                  onClick={() => updateActiveUserKeyword({ returnVars: [...activeUserKeyword.returnVars, ''] })}
+                                  className="text-[10px] text-[#F27D26] font-bold uppercase hover:underline"
+                                >
+                                  + 添加输出
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="bg-white rounded-xl border border-dashed border-gray-300 p-12 text-center">
+                        <FileText size={48} className="mx-auto text-gray-300 mb-4" />
+                        <p className="text-gray-500 mb-4">还没有自定义关键字</p>
+                        <button 
+                          onClick={addUserKeyword}
+                          className="px-4 py-2 bg-[#F27D26] text-white rounded-lg font-bold text-sm hover:bg-[#d96a1d] transition-colors"
+                        >
+                          立即创建一个
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
 
                 {/* Steps Area */}
-                {steps.length === 0 ? (
-                  <div className="h-64 border-2 border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center text-gray-400">
-                    <FileText size={48} className="mb-4 opacity-50" />
-                    <p className="font-medium">从左侧拖拽关键字到此处</p>
-                    <p className="text-xs mt-1">支持 IF/FOR 嵌套结构</p>
+                {(activeTab === 'testcases' || activeUserKeyword) && (
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center px-1">
+                      <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider">执行步骤 (Steps)</h3>
+                      <span className="text-[10px] text-gray-400 font-mono">{steps.length} 步</span>
+                    </div>
+                    
+                    {steps.length === 0 ? (
+                      <div className="h-64 border-2 border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center text-gray-400">
+                        <Plus size={48} className="mb-4 opacity-50" />
+                        <p className="font-medium">从左侧拖拽关键字到此处</p>
+                        <p className="text-xs mt-1">支持 IF/FOR 嵌套结构</p>
+                      </div>
+                    ) : (
+                      renderSteps(steps, null)
+                    )}
                   </div>
-                ) : (
-                  renderSteps(steps, null)
                 )}
               </div>
             </div>
