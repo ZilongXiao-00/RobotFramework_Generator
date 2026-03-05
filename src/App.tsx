@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { CustomKeywordConfigModal } from './CustomKeywordConfigModal';
 import {
   Play, Code, Search, Settings, FileText,
   Terminal, ChevronRight, ChevronDown, Trash2, GripVertical,
@@ -97,11 +98,10 @@ const INITIAL_KEYWORD_LIBRARY = [
   { category: 'BuiltIn', name: 'Evaluate', args: ['expression'], desc: 'Evaluates Python expression.' },
   { category: 'BuiltIn', name: 'Comment', args: ['text'], desc: 'Adds a comment.' },
   { category: 'BuiltIn', name: '#', args: ['text'], desc: 'Hash comment.', isComment: true },
-  { category: 'Custom Library', name: 'sshCommond', args: ['channel', 'command', 'arg'], desc: 'SSH command' },
+  { category: 'Custom Library', name: 'sshCommond', args: ['channel', 'command', 'arg'], desc: 'SSH command', hasSubFunctions: true },
   { category: 'Custom', name: '空白模板 (Custom Code)', args: [], isCustomCode: true, desc: '手写代码' },
 ];
-
-// ─── AuthPage ─────────────────────────────────────────────
+// ─── AuthPage ─────────────────────────────────────────────────────
 function AuthPage({ onLogin }: { onLogin: (t: string, u: any) => void }) {
   const [mode, setMode] = useState<'login'|'register'>('login');
   const [email, setEmail] = useState(''); const [password, setPassword] = useState('');
@@ -313,6 +313,7 @@ export default function App() {
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
   const [syncModal, setSyncModal] = useState<{ keyword: any }|null>(null);
+  const [configModal, setConfigModal] = useState<{ keyword: any }|null>(null);
 
   const [selectedStepId, setSelectedStepId] = useState<string|null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -555,7 +556,9 @@ export default function App() {
   const removeNode=(ns:any[],id:string)=>{let removed:any=null;const f=(l:any[]):any[]=>l.filter(n=>{if(n.id===id){removed=n;return false;}if(n.children)n.children=f(n.children);return true;});return{newNodes:f(ns),removedNode:removed};};
   const insertNode=(ns:any[],tid:string|null,pos:string,nn:any):any[]=>{if(!tid&&pos==='append')return[...ns,nn];let res:any[]=[];for(const n of ns){if(n.id===tid){if(pos==='before'){res.push(nn);res.push(n);}else if(pos==='after'){res.push(n);res.push(nn);}else if(pos==='inside')res.push({...n,children:[...(n.children||[]),nn]});}else res.push(n.children?{...n,children:insertNode(n.children,tid,pos,nn)}:n);}return res;};
   const moveStep=(sid:string,tid:string|null,pos:string)=>setSteps((p:any[])=>{const{newNodes,removedNode}=removeNode(p,sid);return removedNode?insertNode(newNodes,tid,pos,removedNode):p;});
-  const insertNewStep=(kw:any,tid:string|null,pos:string)=>{const da:any={};if(kw.args)kw.args.forEach((a:string)=>{da[a]=kw.name==='sshCommond'&&a==='channel'?'${channel}':kw.name==='FOR'&&a==='IN'?'IN RANGE':'';});const s={id:`step_${Date.now()}`,keyword:kw.name,isCustomCode:kw.isCustomCode||false,isContainer:kw.isContainer||false,isComment:kw.isComment||false,args:da,extraArgs:[],modifier:'',customCode:'',outputVars:[],children:kw.isContainer?[]:undefined};setSteps((p:any[])=>insertNode(p,tid,pos,s));setSelectedStepId(s.id);};
+  const insertNewStep=(kw:any,tid:string|null,pos:string)=>{
+    if(kw.hasSubFunctions){setConfigModal({keyword:kw});return;}
+    const da:any={};if(kw.args)kw.args.forEach((a:string)=>{da[a]=kw.name==='sshCommond'&&a==='channel'?'${channel}':kw.name==='FOR'&&a==='IN'?'IN RANGE':'';});const s={id:`step_${Date.now()}`,keyword:kw.name,isCustomCode:kw.isCustomCode||false,isContainer:kw.isContainer||false,isComment:kw.isComment||false,args:da,extraArgs:[],modifier:'',customCode:'',outputVars:[],children:kw.isContainer?[]:undefined};setSteps((p:any[])=>insertNode(p,tid,pos,s));setSelectedStepId(s.id);};
   const addUserKeyword=()=>{const id=`kw_${Date.now()}`;setUserKeywords(p=>[...p,{id,name:'新关键字',desc:'',args:[],returnVars:[],steps:[]}]);setActiveUserKeywordId(id);setActiveTab('keywords');};
   const removeUserKeyword=(id:string)=>{setUserKeywords(p=>p.filter(k=>k.id!==id));if(activeUserKeywordId===id){setActiveUserKeywordId(null);setActiveTab('testcases');}};
 
@@ -653,6 +656,7 @@ export default function App() {
       {showMyCases&&<MyCasesPanel token={token} onLoad={handleLoadCase} onClose={()=>setShowMyCases(false)}/>}
       {showSaveModal&&<SaveModal defaultName={currentCaseName||activeTestCase?.name||'未命名'} currentCaseId={currentCaseId} onSave={handleSave} onClose={()=>setShowSaveModal(false)}/>}
       {syncModal&&<SyncKeywordModal keyword={syncModal.keyword} libraries={userLibraryFiles} onSync={handleSyncKeywordToLib} onClose={()=>setSyncModal(null)}/>}
+      {configModal&&<CustomKeywordConfigModal keyword={configModal.keyword} onConfirm={(cfg)=>{const da:any={};da['channel']=cfg.args.channel;da['command']=cfg.args.command;da['arg']=cfg.args.arg;const s={id:`step_${Date.now()}`,keyword:cfg.keyword,isCustomCode:false,isContainer:false,isComment:false,args:da,extraArgs:[],modifier:'',customCode:'',outputVars:cfg.returnVars,children:undefined};setSteps((p:any[])=>insertNode(p,null,'append',s));setSelectedStepId(s.id);setConfigModal(null);} } onClose={()=>setConfigModal(null)}/>}
 
       {/* Header */}
       <header className="flex items-center justify-between px-4 py-3 bg-[#141414] text-[#E4E3E0] shadow-md z-10 flex-shrink-0">
