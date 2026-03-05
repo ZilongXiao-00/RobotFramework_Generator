@@ -99,6 +99,7 @@ const INITIAL_KEYWORD_LIBRARY = [
   { category: 'BuiltIn', name: 'Comment', args: ['text'], desc: 'Adds a comment.' },
   { category: 'BuiltIn', name: '#', args: ['text'], desc: 'Hash comment.', isComment: true },
   { category: 'Custom Library', name: 'sshCommond', args: ['channel', 'command', 'arg'], desc: 'SSH command', hasSubFunctions: true },
+  { category: 'Custom Library', name: 'ser_write_FLO_command', args: ['value'], desc: 'FLO command', returnVars: ['${result_SendCmd}'] },
   { category: 'Custom', name: '空白模板 (Custom Code)', args: [], isCustomCode: true, desc: '手写代码' },
 ];
 // ─── AuthPage ─────────────────────────────────────────────────────
@@ -558,7 +559,7 @@ export default function App() {
   const moveStep=(sid:string,tid:string|null,pos:string)=>setSteps((p:any[])=>{const{newNodes,removedNode}=removeNode(p,sid);return removedNode?insertNode(newNodes,tid,pos,removedNode):p;});
   const insertNewStep=(kw:any,tid:string|null,pos:string)=>{
     if(kw.hasSubFunctions){setConfigModal({keyword:kw});return;}
-    const da:any={};if(kw.args)kw.args.forEach((a:string)=>{da[a]=kw.name==='sshCommond'&&a==='channel'?'${channel}':kw.name==='FOR'&&a==='IN'?'IN RANGE':'';});const s={id:`step_${Date.now()}`,keyword:kw.name,isCustomCode:kw.isCustomCode||false,isContainer:kw.isContainer||false,isComment:kw.isComment||false,args:da,extraArgs:[],modifier:'',customCode:'',outputVars:[],children:kw.isContainer?[]:undefined};setSteps((p:any[])=>insertNode(p,tid,pos,s));setSelectedStepId(s.id);};
+    const da:any={};if(kw.args)kw.args.forEach((a:string)=>{da[a]=kw.name==='sshCommond'&&a==='channel'?'${channel}':kw.name==='FOR'&&a==='IN'?'IN RANGE':'';});const s={id:`step_${Date.now()}`,keyword:kw.name,isCustomCode:kw.isCustomCode||false,isContainer:kw.isContainer||false,isComment:kw.isComment||false,args:da,extraArgs:[],modifier:'',customCode:'',outputVars:kw.returnVars||[],children:kw.isContainer?[]:undefined};setSteps((p:any[])=>insertNode(p,tid,pos,s));setSelectedStepId(s.id);};
   const addUserKeyword=()=>{const id=`kw_${Date.now()}`;setUserKeywords(p=>[...p,{id,name:'新关键字',desc:'',args:[],returnVars:[],steps:[]}]);setActiveUserKeywordId(id);setActiveTab('keywords');};
   const removeUserKeyword=(id:string)=>{setUserKeywords(p=>p.filter(k=>k.id!==id));if(activeUserKeywordId===id){setActiveUserKeywordId(null);setActiveTab('testcases');}};
 

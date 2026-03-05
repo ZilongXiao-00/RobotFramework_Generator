@@ -94,8 +94,8 @@ export function CustomKeywordConfigModal({
   // 处理确认
   const handleConfirm = () => {
     if (!kwDef) return;
-    // 构建子函数参数（空格拼接）
-    const subFuncArgs = selectedSubFunc + (currentSubFuncDef ? " " + Object.values(argValues).filter(v => v).join(" ") : "");
+    // 构建子函数参数（只包含参数值，不包含子函数名）
+    const subFuncArgs = currentSubFuncDef ? Object.values(argValues).filter(v => v).join(" ") : "";
     // 构建返回值
     const returnVars = currentSubFuncDef?.returnVars ? Object.keys(currentSubFuncDef.returnVars) : Object.keys(kwDef.returnVars || {});
     onConfirm({
@@ -226,7 +226,7 @@ export function CustomKeywordConfigModal({
           <div>
             <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">代码预览</label>
             <pre className="p-3 bg-[#1e1e1e] text-[#d4d4d4] rounded-lg text-xs font-mono overflow-x-auto">
-              {selectedSubFunc ? `${Object.keys(currentSubFuncDef?.returnVars || kwDef?.returnVars || {}).join("    ")}    ${keyword.name}    ${kwDef?.fixedArg || ""}    ${selectedSubFunc}${currentSubFuncDef ? " " + Object.values(argValues).filter(v => v).join(" ") : ""}` : "请选择子函数"}
+              {selectedSubFunc ? `${Object.keys(currentSubFuncDef?.returnVars || kwDef?.returnVars || {}).join("    ")}    ${keyword.name}    ${kwDef?.fixedArg || ""}    ${selectedSubFunc}    ${Object.values(argValues).filter(v => v).join(" ")}` : "请选择子函数"}
             </pre>
           </div>
         </div>
