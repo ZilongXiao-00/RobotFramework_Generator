@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { CustomKeywordConfigModal } from './CustomKeywordConfigModal';
+import { CustomKeywordConfigModal, CUSTOM_KEYWORD_DEFS } from './CustomKeywordConfigModal';
 import {
   Play, Code, Search, Settings, FileText,
   Terminal, ChevronRight, ChevronDown, Trash2, GripVertical,
@@ -923,7 +923,49 @@ export default function App() {
                     <div className="pt-2 border-t border-gray-100">
                       <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-3">输入参数</label>
                       {Object.keys(selectedStep.args||{}).length===0?<div className="text-xs text-gray-400 italic">无预设参数</div>:(
-                        <div className="space-y-3">{Object.keys(selectedStep.args).map(k=>(<div key={k}><label className="block text-xs text-gray-700 mb-1">{k}</label><input type="text" value={selectedStep.args[k]} onChange={e=>updateStep(selectedStep.id,{args:{...selectedStep.args,[k]:e.target.value}})} className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]"/></div>))}</div>
+                        <div className="space-y-3">{Object.keys(selectedStep.args).map(k=>{
+                          // 查找参数描述和推荐值
+                          const kwDef = CUSTOM_KEYWORD_DEFS[selectedStep.keyword];
+                          const argInfo = kwDef?.args?.[k];
+                          const recommendedValues = argInfo?.recommended ? argInfo.recommended.split('/') : [];
+                          const hasRecommended = recommendedValues.length > 0;
+                          return (
+                            <div key={k}>
+                              <label className="block text-xs text-gray-700 mb-1">
+                                {k}
+                                {argInfo?.desc && <span className="text-gray-400 font-normal ml-1">- {argInfo.desc}</span>}
+                              </label>
+                              {hasRecommended ? (
+                                <div className="flex gap-1">
+                                  <input
+                                    type="text"
+                                    value={selectedStep.args[k]}
+                                    onChange={e=>updateStep(selectedStep.id,{args:{...selectedStep.args,[k]:e.target.value}})}
+                                    placeholder={argInfo.recommended}
+                                    className="flex-1 px-2 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]"
+                                  />
+                                  <select
+                                    value={selectedStep.args[k]}
+                                    onChange={e=>updateStep(selectedStep.id,{args:{...selectedStep.args,[k]:e.target.value}})}
+                                    className="px-2 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:border-[#F27D26] bg-white"
+                                  >
+                                    <option value="">选择</option>
+                                    {recommendedValues.map(v => (
+                                      <option key={v} value={v}>{v}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                              ) : (
+                                <input
+                                  type="text"
+                                  value={selectedStep.args[k]}
+                                  onChange={e=>updateStep(selectedStep.id,{args:{...selectedStep.args,[k]:e.target.value}})}
+                                  className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]"
+                                />
+                              )}
+                            </div>
+                          );
+                        })}</div>
                       )}
                     </div>
                     {!selectedStep.isContainer&&(
@@ -939,7 +981,20 @@ export default function App() {
                     </div>
                     {!selectedStep.isContainer&&(
                       <div className="pt-4 border-t border-gray-100"><label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">输出变量</label>
-                        {(selectedStep.outputVars||[]).map((v:string,idx:number)=>(<div key={idx} className="flex items-center gap-2 mb-2"><input type="text" value={v} onChange={e=>{const n=[...(selectedStep.outputVars||[])];n[idx]=e.target.value;updateStep(selectedStep.id,{outputVars:n});}} className="flex-1 px-2 py-1.5 text-xs font-mono border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" placeholder="${result}"/><button onClick={()=>{const n=[...(selectedStep.outputVars||[])];n.splice(idx,1);updateStep(selectedStep.id,{outputVars:n});}} className="p-1 text-gray-400 hover:text-red-500"><X size={14}/></button></div>))}
+                        {(selectedStep.outputVars||[]).map((v:string,idx:number)=>{
+                          // 查找返回值描述
+                          const kwDef = CUSTOM_KEYWORD_DEFS[selectedStep.keyword];
+                          const returnDesc = kwDef?.directReturnVars?.[v] || kwDef?.returnVars?.[v];
+                          return (
+                            <div key={idx} className="mb-2">
+                              <div className="flex items-center gap-2">
+                                <input type="text" value={v} onChange={e=>{const n=[...(selectedStep.outputVars||[])];n[idx]=e.target.value;updateStep(selectedStep.id,{outputVars:n});}} className="flex-1 px-2 py-1.5 text-xs font-mono border border-gray-300 rounded focus:outline-none focus:border-[#F27D26]" placeholder="${result}"/>
+                                <button onClick={()=>{const n=[...(selectedStep.outputVars||[])];n.splice(idx,1);updateStep(selectedStep.id,{outputVars:n});}} className="p-1 text-gray-400 hover:text-red-500"><X size={14}/></button>
+                              </div>
+                              {returnDesc && <div className="text-[10px] text-gray-400 mt-1">{returnDesc}</div>}
+                            </div>
+                          );
+                        })}
                         <button onClick={()=>updateStep(selectedStep.id,{outputVars:[...(selectedStep.outputVars||[]),'']})} className="flex items-center gap-1 text-xs text-[#F27D26] font-medium hover:underline"><Plus size={12}/> 添加输出变量</button>
                       </div>
                     )}

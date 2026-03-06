@@ -11,6 +11,10 @@ export const CUSTOM_KEYWORD_DEFS: Record<string, {
     returnVars: Record<string, string>;
     args: Record<string, { desc: string; recommended: string }>;
   }>;
+  // 直接参数定义（无子函数时使用）
+  args?: Record<string, { desc: string; recommended: string }>;
+  // 直接返回值定义
+  directReturnVars?: Record<string, string>;
 }> = {
   "sshCommond": {
     fixedArg: "${channel}",
@@ -66,8 +70,19 @@ export const CUSTOM_KEYWORD_DEFS: Record<string, {
   "ser_write_FLO_command": {
     fixedArg: "",
     fixedArgDesc: "",
-    returnVars: { "${result_SendCmd}": "True:成功 | False:失败" },
-    subFunctions: {}
+    returnVars: { "${result_SendCmd}": "True:指令下发成功;False:指令下发失败" },
+    subFunctions: {},
+    // 直接参数定义（无子函数时使用）
+    args: {
+      "value": {
+        desc: "表示座椅占位的开关value=1:ON,座椅占位value=0:OFF,取消占位",
+        recommended: "1/0"
+      }
+    },
+    // 直接返回值定义
+    directReturnVars: {
+      "${result_SendCmd}": "True:指令下发成功;False:指令下发失败"
+    }
   }
 };
 
